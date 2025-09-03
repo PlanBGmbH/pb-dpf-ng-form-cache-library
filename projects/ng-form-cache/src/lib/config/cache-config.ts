@@ -1,4 +1,4 @@
-import { InjectionToken } from "@angular/core";
+import { InjectionToken } from '@angular/core';
 
 export interface FormCacheConfig {
   indexKeyPrefix: string;
@@ -7,11 +7,11 @@ export interface FormCacheConfig {
   autoSaveDebounceTime: number;
 }
 
-export const FORM_CACHE_CONFIG = new InjectionToken<FormCacheConfig>("form-cache.config");
+export const FORM_CACHE_CONFIG = new InjectionToken<FormCacheConfig>('form-cache.config');
 
 export const defaultConfig: FormCacheConfig = {
   indexKeyPrefix: 'fc_index_',
   draftKeyPrefix: 'fc_draft_',
   sessionIdKey: 'app_current_session_id',
-  autoSaveDebounceTime: 1000
-}
+  autoSaveDebounceTime: 1000,
+};

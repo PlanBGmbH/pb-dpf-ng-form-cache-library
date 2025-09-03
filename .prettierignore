@@ -1,0 +1,5 @@
+dist/**
+projects/**/assets/*
+.angular/**
+.vscode/**
+**/environments/environment*.ts

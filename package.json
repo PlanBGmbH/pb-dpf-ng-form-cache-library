@@ -9,7 +9,12 @@
     "test": "ng test",
     "build:library": "ng build ng-form-cache",
     "watch:library": "ng build ng-form-cache --watch",
-    "start:app": "npm run build:library && ng serve ng-form-cache-sample"
+    "start:app": "npm run build:library && ng serve ng-form-cache-sample",
+    "lint": "ng lint",
+    "lint:fix": "ng lint --fix",
+    "format:fix": "prettier --config ./.prettierrc --write \"**{.ts,.js,.json,.css,.scss,.html}\"",
+    "format:check": "prettier --config ./.prettierrc --check \"**{.ts,.js,.json,.css,.scss,.html}\"",
+    "prepare": "husky"
   },
   "prettier": {
     "printWidth": 100,
@@ -38,7 +43,14 @@
     "@angular/build": "^20.2.1",
     "@angular/cli": "^20.2.1",
     "@angular/compiler-cli": "^20.2.0",
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
     "@types/jasmine": "~5.1.0",
+    "angular-eslint": "20.2.0",
+    "eslint": "^9.33.0",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-plugin-prettier": "^5.4.1",
+    "husky": "^9.1.7",
     "jasmine-core": "~5.9.0",
     "karma": "~6.4.0",
     "karma-chrome-launcher": "~3.2.0",
@@ -46,6 +58,13 @@
     "karma-jasmine": "~5.1.0",
     "karma-jasmine-html-reporter": "~2.1.0",
     "ng-packagr": "^20.2.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "typescript-eslint": "8.40.0"
+  },
+  "lint-staged": {
+    "**/*.{ts,html,scss}": [
+      "eslint --fix",
+      "prettier --write"
+    ]
   }
 }
