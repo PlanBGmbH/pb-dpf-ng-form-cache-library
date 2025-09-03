@@ -1,6 +1,6 @@
-import { InjectionToken } from "@angular/core";
-import { StoredEntityData } from "./storage-entity-data";
-import { UserDraftIndex } from "./user-draft-index";
+import { InjectionToken } from '@angular/core';
+import { StoredEntityData } from './storage-entity-data';
+import { UserDraftIndex } from './user-draft-index';
 
 /**
  * This interface defines the contract for a storage service.
