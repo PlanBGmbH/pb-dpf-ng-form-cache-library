@@ -1,0 +1,111 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "newProjectRoot": "projects",
+  "projects": {
+    "ng-form-cache": {
+      "projectType": "library",
+      "root": "projects/ng-form-cache",
+      "sourceRoot": "projects/ng-form-cache/src",
+      "prefix": "fc",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:ng-packagr",
+          "configurations": {
+            "production": {
+              "tsConfig": "projects/ng-form-cache/tsconfig.lib.prod.json"
+            },
+            "development": {
+              "tsConfig": "projects/ng-form-cache/tsconfig.lib.json"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "test": {
+          "builder": "@angular/build:karma",
+          "options": {
+            "tsConfig": "projects/ng-form-cache/tsconfig.spec.json"
+          }
+        }
+      }
+    },
+    "ng-form-cache-sample": {
+      "projectType": "application",
+      "schematics": {},
+      "root": "projects/ng-form-cache-sample",
+      "sourceRoot": "projects/ng-form-cache-sample/src",
+      "prefix": "fc",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "projects/ng-form-cache-sample/src/main.ts",
+            "tsConfig": "projects/ng-form-cache-sample/tsconfig.app.json",
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "projects/ng-form-cache-sample/public"
+              }
+            ],
+            "styles": [
+              "projects/ng-form-cache-sample/src/styles.css"
+            ]
+          },
+          "configurations": {
+            "production": {
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "500kB",
+                  "maximumError": "1MB"
+                },
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "4kB",
+                  "maximumError": "8kB"
+                }
+              ],
+              "outputHashing": "all"
+            },
+            "development": {
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "configurations": {
+            "production": {
+              "buildTarget": "ng-form-cache-sample:build:production"
+            },
+            "development": {
+              "buildTarget": "ng-form-cache-sample:build:development"
+            }
+          },
+          "defaultConfiguration": "development"
+        },
+        "extract-i18n": {
+          "builder": "@angular/build:extract-i18n"
+        },
+        "test": {
+          "builder": "@angular/build:karma",
+          "options": {
+            "tsConfig": "projects/ng-form-cache-sample/tsconfig.spec.json",
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "projects/ng-form-cache-sample/public"
+              }
+            ],
+            "styles": [
+              "projects/ng-form-cache-sample/src/styles.css"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
