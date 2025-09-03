@@ -2,7 +2,7 @@ import { Directive, inject, input, OnDestroy, OnInit } from '@angular/core';
 import { FormGroupDirective } from '@angular/forms';
 import { Subject } from 'rxjs';
 import { takeUntil } from 'rxjs/operators';
-import { FormPersistenceService } from '../services/form-persistence';
+import { FORM_PERSISTENCE_SERVICE } from '../types/service-tokens';
 import { StoredEntityData } from '../types/storage-entity-data';
 
 @Directive({
@@ -18,7 +18,7 @@ export class AutoSaveDirective implements OnInit, OnDestroy {
 	private readonly destroy$ = new Subject<void>();
 
 	private readonly formGroupDirective = inject(FormGroupDirective);
-	private readonly formPersistenceService = inject(FormPersistenceService);
+	private readonly formPersistenceService = inject(FORM_PERSISTENCE_SERVICE);
 
 	public ngOnInit() {
 		this.formGroupDirective.form.valueChanges.pipe(takeUntil(this.destroy$)).subscribe(() => {

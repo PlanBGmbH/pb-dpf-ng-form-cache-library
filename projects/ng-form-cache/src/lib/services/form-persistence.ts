@@ -4,16 +4,16 @@ import { Subject } from 'rxjs';
 import { debounceTime, takeUntil } from 'rxjs/operators';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
+import { SESSION_MANAGER_SERVICE } from '../types/service-tokens';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
-import { SessionManagerService } from './session-manager';
 
 @Injectable()
 export class FormPersistenceService implements OnDestroy {
 	private readonly storageService = inject(FORM_CACHE_STORAGE);
 	private readonly persistentConfig = inject(DRAFT_PERSISTENT_CONFIG);
 	private readonly config = inject(FORM_CACHE_CONFIG);
-	private readonly sessionManagerService = inject(SessionManagerService);
+	private readonly sessionManagerService = inject(SESSION_MANAGER_SERVICE);
 	private readonly userId = signal<string>('');
 	private readonly autoSaveSubject = new Subject<{
 		form: FormGroup;
