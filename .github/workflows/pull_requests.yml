@@ -1,0 +1,65 @@
+name: Pull_Request_Validation
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+  workflow_dispatch:
+
+jobs:
+  build-library:
+    name: Build Library
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com/
+
+      - name: Install Dependencies
+        run: npm ci
+        
+      - name: Build Library
+        run: npm run build:library
+
+  build-sample-app:
+    name: Build Sample App
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com/
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Sample Application
+        run: npm run build:app
+
+  build-documentation:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com/
+
+      - name: Install Dependencies
+        run: cd docs/ng-form-cache && npm ci
+
+      - name: Build Documentation
+        run: cd docs/ng-form-cache && npm run build
