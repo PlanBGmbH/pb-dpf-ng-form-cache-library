@@ -15,8 +15,9 @@ export class AutoSaveDirective implements OnInit, OnDestroy {
   public readonly entityId = input.required<string>({ alias: 'fcObjectId' });
   // eslint-disable-next-line @angular-eslint/no-input-rename
   public readonly autoLoad = input<boolean>(true, { alias: 'fcAutoLoad' });
-  // eslint-disable-next-line @angular-eslint/no-input-rename, @typescript-eslint/no-empty-function
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
   public readonly notifyFunc = input<(draft: StoredEntityData<unknown>) => void>(() => {}, {
+    // eslint-disable-next-line @angular-eslint/no-input-rename
     alias: 'fcNotifyFunc',
   });
 
