@@ -1,0 +1,8 @@
+{
+  "label": "Explanation",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "Understand the design concepts behind ng-form-cache."
+  }
+}
