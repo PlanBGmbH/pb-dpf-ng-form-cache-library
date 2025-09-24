@@ -5,3 +5,8 @@ projects/**/assets/*
 **/environments/environment*.ts
 docs/ng-form-cache/build/**
 docs/ng-form-cache/.docusaurus/**
+node_modules
+dist
+build
+coverage
+*.min.*
