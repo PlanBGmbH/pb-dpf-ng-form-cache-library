@@ -1,6 +1,13 @@
 {
-	"name": "ng-form-cache",
+	"name": "@planbgmbh/ng-form-cache",
 	"version": "0.0.1",
+	"publishConfig": {
+		"@planb:registry": "https://npm.pkg.github.com"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git://github.com/PlanBGmbH/pb-dpf-ng-form-cache-library.git"
+	},
 	"peerDependencies": {
 		"@angular/common": "^20.0.0",
 		"@angular/core": "^20.0.0"
