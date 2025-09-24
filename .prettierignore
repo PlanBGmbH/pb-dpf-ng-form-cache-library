@@ -3,3 +3,5 @@ projects/**/assets/*
 .angular/**
 .vscode/**
 **/environments/environment*.ts
+docs/ng-form-cache/build/**
+docs/ng-form-cache/.docusaurus/**
