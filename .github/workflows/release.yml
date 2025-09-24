@@ -5,6 +5,8 @@ on:
     tags:
       - "v*"
 
+workflow_dispatch:
+
 jobs:
   define-variables:
     name: Defining and extracting Variables
@@ -66,13 +68,37 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Mandatory to use the extract version from tag action
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://npm.pkg.github.com/
+      - name: Ensure main contains release tag
+        run: git merge --ff-only ${{ github.sha }}
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
       - run: npm ci
+      - name: Update version and changelog
+        run: |
+          mkdir -p projects/ng-form-cache
+          touch projects/ng-form-cache/Changelog.md
+          VERSION=${{ needs.define-variables.outputs.version }}
+          npx commit-and-tag-version --release-as "$VERSION" --skip.tag --skip.commit --infile projects/ng-form-cache/Changelog.md
+      - name: Commit release metadata
+        run: |
+          git add package.json package-lock.json projects/ng-form-cache/package.json projects/ng-form-cache/Changelog.md
+          if git diff --cached --quiet; then
+            echo "No release metadata changes detected"
+          else
+            git commit -m "chore(release): v${{ needs.define-variables.outputs.version }} [skip ci]"
+            git push origin HEAD:main
+          fi
+      - run: npm run format:check
       - run: npm run build:library
-      - run: node build/update-version.js --version ${{ needs.define-variables.outputs.version }}
+      - name: Copy changelog into dist
+        run: cp projects/ng-form-cache/Changelog.md dist/ng-form-cache/Changelog.md
       - run: cd dist/ng-form-cache && npm publish
         env:
           NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
