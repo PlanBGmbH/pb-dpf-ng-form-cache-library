@@ -62,6 +62,9 @@ jobs:
     needs: [define-variables]
     name: Build & Publish Package
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,10 +76,6 @@ jobs:
           registry-url: https://npm.pkg.github.com/
       - name: Ensure main contains release tag
         run: git merge --ff-only ${{ github.sha }}
-      - name: Configure git user
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
       - run: npm ci
       - name: Update version and changelog
         run: |
@@ -84,16 +83,29 @@ jobs:
           touch projects/ng-form-cache/Changelog.md
           VERSION=${{ needs.define-variables.outputs.version }}
           npx commit-and-tag-version --release-as "$VERSION" --skip.tag --skip.commit --infile projects/ng-form-cache/Changelog.md
-      - name: Commit release metadata
-        run: |
-          git add package.json package-lock.json projects/ng-form-cache/package.json projects/ng-form-cache/Changelog.md
-          if git diff --cached --quiet; then
-            echo "No release metadata changes detected"
-          else
-            git commit -m "chore(release): v${{ needs.define-variables.outputs.version }} [skip ci]"
-            git push origin HEAD:main
-          fi
       - run: npm run format:check
+      - name: Create release pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/release/v${{ needs.define-variables.outputs.version }}
+          base: main
+          commit-message: chore(release): v${{ needs.define-variables.outputs.version }} [skip ci]
+          committer: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+          author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+          title: chore(release): v${{ needs.define-variables.outputs.version }}
+          body: |
+            Automated release PR for v${{ needs.define-variables.outputs.version }}.
+
+            - chore: version bump via commit-and-tag-version
+            - docs: changelog update
+          add-paths: |
+            package.json
+            package-lock.json
+            projects/ng-form-cache/package.json
+            projects/ng-form-cache/Changelog.md
+          draft: false
+          delete-branch: true
+          skip-if-empty: true
       - run: npm run build:library
       - name: Copy changelog into dist
         run: cp projects/ng-form-cache/Changelog.md dist/ng-form-cache/Changelog.md
