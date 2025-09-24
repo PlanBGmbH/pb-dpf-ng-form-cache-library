@@ -1,0 +1,26 @@
+{
+	"packageFiles": [
+		{
+			"filename": "package.json",
+			"type": "json"
+		},
+		{
+			"filename": "projects/ng-form-cache/package.json",
+			"type": "json"
+		}
+	],
+	"bumpFiles": [
+		{
+			"filename": "package.json",
+			"type": "json"
+		},
+		{
+			"filename": "package-lock.json",
+			"type": "json"
+		},
+		{
+			"filename": "projects/ng-form-cache/package.json",
+			"type": "json"
+		}
+	]
+}

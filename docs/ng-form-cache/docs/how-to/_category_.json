@@ -1,8 +1,8 @@
 {
-  "label": "How-to Guides",
-  "position": 2,
-  "link": {
-    "type": "generated-index",
-    "description": "Solve focused tasks and configure the form cache to fit your app."
-  }
+	"label": "How-to Guides",
+	"position": 2,
+	"link": {
+		"type": "generated-index",
+		"description": "Solve focused tasks and configure the form cache to fit your app."
+	}
 }
