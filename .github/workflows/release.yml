@@ -37,9 +37,6 @@ jobs:
     name: Create Github Release
     if: needs.define-variables.outputs.pre_release == 'false'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: "marvinpinto/action-automatic-releases@latest"
@@ -53,9 +50,6 @@ jobs:
     name: Create Github Pre-Release
     if: needs.define-variables.outputs.pre_release == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: "marvinpinto/action-automatic-releases@latest"
