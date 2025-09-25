@@ -79,10 +79,8 @@ jobs:
       - run: npm ci
       - name: Update version and changelog
         run: |
-          mkdir -p projects/ng-form-cache
-          touch projects/ng-form-cache/Changelog.md
           VERSION=${{ needs.define-variables.outputs.version }}
-          npx commit-and-tag-version --release-as "$VERSION" --skip.tag --skip.commit --infile projects/ng-form-cache/Changelog.md
+          npx commit-and-tag-version --release-as "$VERSION" --skip.tag --skip.commit --infile projects/ng-form-cache/changelog.md
       - run: npm run format:check
       - name: Create release pull request
         uses: peter-evans/create-pull-request@v6
@@ -102,13 +100,11 @@ jobs:
             package.json
             package-lock.json
             projects/ng-form-cache/package.json
-            projects/ng-form-cache/Changelog.md
+            projects/ng-form-cache/changelog.md
           draft: false
           delete-branch: true
           skip-if-empty: true
       - run: npm run build:library
-      - name: Copy changelog into dist
-        run: cp projects/ng-form-cache/Changelog.md dist/ng-form-cache/Changelog.md
       - run: cd dist/ng-form-cache && npm publish
         env:
           NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}

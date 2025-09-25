@@ -3,5 +3,6 @@
 	"dest": "../../dist/ng-form-cache",
 	"lib": {
 		"entryFile": "src/public-api.ts"
-	}
+	},
+	"assets": ["changelog.md"]
 }
