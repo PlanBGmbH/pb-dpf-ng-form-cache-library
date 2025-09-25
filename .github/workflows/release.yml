@@ -88,7 +88,7 @@ jobs:
         with:
           branch: chore/release/v${{ needs.define-variables.outputs.version }}
           base: main
-          commit-message: 'chore(release): v${{ needs.define-variables.outputs.version }} [skip ci]'
+          commit-message: 'chore(release): v${{ needs.define-variables.outputs.version }}'
           committer: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
           author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
           title: 'chore(release): v${{ needs.define-variables.outputs.version }}'
