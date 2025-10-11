@@ -106,6 +106,13 @@ jobs:
           delete-branch: true
           skip-if-empty: true
       - run: npm run build:library
-      - run: cd dist/ng-form-cache && npm publish
+      - name: Publish package
+        run: |
+          cd dist/ng-form-cache
+          if [ "${{ needs.define-variables.outputs.pre_release }}" = "true" ]; then
+            npm publish --tag ${{ needs.define-variables.outputs.label }}
+          else
+            npm publish
+          fi
         env:
           NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
