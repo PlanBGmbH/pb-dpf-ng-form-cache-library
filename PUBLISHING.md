@@ -48,12 +48,19 @@ When you push a tag with format `v*`, the **Release Workflow** automatically:
    - Contains version bumps and changelog updates
    - Ready for review and merge
 
-### 3. Publish Workflow Execution
+### 3. Review and Merge Release PR
 
-When the release branch `chore/release/*` is pushed (by the Release Workflow), the **Publish Workflow** automatically:
+After the Release Workflow creates the PR:
 
-1. **Extracts version from branch name**
-   - Branch: `chore/release/v0.0.2-beta.1` → Version: `0.0.2-beta.1`
+1. **Review the release PR** - Check version updates and changelog
+2. **Merge the release PR** - This triggers the Publish Workflow
+
+### 4. Publish Workflow Execution
+
+When a release PR (`chore/release/*`) is merged to main, the **Publish Workflow** automatically:
+
+1. **Extracts version from merged PR branch**
+   - PR branch: `chore/release/v0.0.2-beta.1` → Version: `0.0.2-beta.1`
 
 2. **Builds the library**
    - Runs `npm ci` to install dependencies
@@ -96,17 +103,29 @@ v1.0.0-rc.1
   - `create-release-pr`: Update versions and create PR
 
 ### `.github/workflows/publish.yml`
-- **Trigger**: Push to branches matching `chore/release/*`
+- **Trigger**: 
+  - Pull request merged to `main` from `chore/release/*` branches
+  - Manual workflow dispatch (for manual publishing)
 - **Purpose**: Build and publish the library
 - **Jobs**:
-  - `extract-version`: Extract version from branch name
+  - `extract-version`: Extract version from merged PR branch or manual input
   - `build-and-publish`: Build library and publish to npm
 
 ## Manual Steps
 
-1. **Push the version tag** - This is the only manual step required
+1. **Push the version tag** - Triggers the Release Workflow
 2. **Review and merge the release PR** - Created automatically by the Release Workflow
-3. **Monitor the Publish Workflow** - Runs automatically when the release branch is pushed
+3. **Monitor the Publish Workflow** - Runs automatically when the release PR is merged
+
+## Manual Publishing (Alternative)
+
+You can also manually trigger the Publish Workflow:
+
+1. Go to the "Actions" tab in GitHub
+2. Select "Build and Publish Package" workflow
+3. Click "Run workflow"
+4. Enter the version to publish (e.g., `1.0.0` or `1.0.0-beta.1`)
+5. Click "Run workflow"
 
 ## Package Configuration
 
