@@ -58,14 +58,13 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
           title: ${{ needs.define-variables.outputs.version }}
-  github:
+  create-release-pr:
     needs: [define-variables]
-    name: Build & Publish Package
+    name: Create Release Pull Request
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
-      packages: write   
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,7 +73,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://npm.pkg.github.com/
       - name: Ensure main contains release tag
         run: git merge --ff-only ${{ github.sha }}
       - run: npm ci
@@ -82,6 +80,11 @@ jobs:
         run: |
           VERSION=${{ needs.define-variables.outputs.version }}
           npx commit-and-tag-version --release-as "$VERSION" --skip.tag --skip.commit --infile projects/ng-form-cache/changelog.md
+      - name: Verify version update
+        run: |
+          echo "Expected version: ${{ needs.define-variables.outputs.version }}"
+          echo "Root package.json version: $(cat package.json | grep '"version"' | cut -d '"' -f 4)"
+          echo "Library package.json version: $(cat projects/ng-form-cache/package.json | grep '"version"' | cut -d '"' -f 4)"
       - run: npm run format:check
       - name: Create release pull request
         uses: peter-evans/create-pull-request@v6
@@ -97,6 +100,8 @@ jobs:
 
             - chore: version bump via commit-and-tag-version
             - docs: changelog update
+            
+            This PR will automatically trigger the build and publish workflow when pushed.
           add-paths: |
             package.json
             package-lock.json
@@ -105,14 +110,3 @@ jobs:
           draft: false
           delete-branch: true
           skip-if-empty: true
-      - run: npm run build:library
-      - name: Publish package
-        run: |
-          cd dist/ng-form-cache
-          if [ "${{ needs.define-variables.outputs.pre_release }}" = "true" ]; then
-            npm publish --tag ${{ needs.define-variables.outputs.label }}
-          else
-            npm publish
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
