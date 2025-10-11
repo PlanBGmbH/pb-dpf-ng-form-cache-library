@@ -1,0 +1,67 @@
+name: Build and Publish Package
+
+on:
+  push:
+    branches:
+      - "chore/release/*"
+
+jobs:
+  extract-version:
+    name: Extract version from branch name
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
+      label: ${{ steps.get_label.outputs.LABEL }}
+      pre_release: ${{ steps.prerelease_check.outputs.PRE_RELEASE }}
+    steps:
+      - name: Get Version from branch name
+        id: get_version
+        # E.g. converts chore/release/v0.0.1 -> 0.0.1
+        run: echo "VERSION=$(echo $GITHUB_REF | cut -d / -f 5 | cut -c 2-)" >> $GITHUB_OUTPUT
+      - name: Get Label
+        id: get_label
+        # E.g. converts 0.0.1-beta.1 -> beta
+        run: echo "LABEL=$(echo ${{ steps.get_version.outputs.VERSION }} | awk -F '-' '{split($2, arr, "."); print arr[1]}')" >> $GITHUB_OUTPUT
+      - name: Check for Pre-Release or Release
+        id: prerelease_check
+        run: |
+          if [ "${{ steps.get_label.outputs.LABEL }}" != '' ]; then
+            echo "PRE_RELEASE=true" >> $GITHUB_OUTPUT
+          else
+            echo "PRE_RELEASE=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-publish:
+    needs: [extract-version]
+    name: Build & Publish Package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: write   
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com/
+      - run: npm ci
+      - name: Verify version in package.json
+        run: |
+          echo "Expected version: ${{ needs.extract-version.outputs.version }}"
+          echo "Root package.json version: $(cat package.json | grep '"version"' | cut -d '"' -f 4)"
+          echo "Library package.json version: $(cat projects/ng-form-cache/package.json | grep '"version"' | cut -d '"' -f 4)"
+      - run: npm run format:check
+      - run: npm run build:library
+      - name: Publish package
+        run: |
+          cd dist/ng-form-cache
+          if [ "${{ needs.extract-version.outputs.pre_release }}" = "true" ]; then
+            npm publish --tag ${{ needs.extract-version.outputs.label }}
+          else
+            npm publish
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
