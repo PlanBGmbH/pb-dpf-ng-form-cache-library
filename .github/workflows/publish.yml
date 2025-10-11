@@ -1,23 +1,37 @@
 name: Build and Publish Package
 
 on:
-  push:
+  pull_request:
+    types: [closed]
     branches:
-      - "chore/release/*"
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 1.0.0 or 1.0.0-beta.1)'
+        required: true
+        type: string
 
 jobs:
   extract-version:
-    name: Extract version from branch name
+    name: Extract version information
     runs-on: ubuntu-latest
+    if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true && startsWith(github.head_ref, 'chore/release/')) || github.event_name == 'workflow_dispatch'
     outputs:
       version: ${{ steps.get_version.outputs.VERSION }}
       label: ${{ steps.get_label.outputs.LABEL }}
       pre_release: ${{ steps.prerelease_check.outputs.PRE_RELEASE }}
     steps:
-      - name: Get Version from branch name
+      - uses: actions/checkout@v4
+      - name: Get Version
         id: get_version
-        # E.g. converts chore/release/v0.0.1 -> 0.0.1
-        run: echo "VERSION=$(echo $GITHUB_REF | cut -d / -f 5 | cut -c 2-)" >> $GITHUB_OUTPUT
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Extract from PR branch name: chore/release/v0.0.1 -> 0.0.1
+            echo "VERSION=$(echo ${{ github.head_ref }} | cut -d / -f 3 | cut -c 2-)" >> $GITHUB_OUTPUT
+          fi
       - name: Get Label
         id: get_label
         # E.g. converts 0.0.1-beta.1 -> beta
