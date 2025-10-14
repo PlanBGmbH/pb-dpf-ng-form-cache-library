@@ -20,7 +20,7 @@ function HomepageHeader() {
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
-            to="/docs/category/tutorials">
+            to="/docs/category/getting-started">
             Get started
           </Link>
         </div>
@@ -33,8 +33,8 @@ export default function Home(): ReactNode {
   const { siteConfig } = useDocusaurusContext();
   return (
     <Layout
-      title={`Hello from ${siteConfig.title}`}
-      description="Description will go into a meta tag in <head />">
+      title={`Angular Form Cache Library - ${siteConfig.title}`}
+      description="Never lose form data again! Angular Form Cache is a powerful library that automatically saves and restores your form data, ensuring a seamless user experience.">
       <HomepageHeader />
       <main>
         <HomepageFeatures />
