@@ -5,9 +5,9 @@ import { themes as prismThemes } from 'prism-react-renderer';
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 const config: Config = {
-	title: 'NG Form Cache Library Documentation',
+	title: 'NG Form Cache Library',
 	tagline: 'Make storing form data easy',
-	favicon: 'img/favicon.ico',
+	favicon: 'img/logo.png',
 
 	// Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
 	future: {
@@ -75,7 +75,7 @@ const config: Config = {
 		// Replace with your project's social card
 		image: 'img/docusaurus-social-card.jpg',
 		navbar: {
-			title: 'Form Cache Library Documentation',
+			title: 'Form Cache Library',
 			logo: {
 				alt: 'Logo NG Form Cache Library',
 				src: 'img/logo.png',
@@ -85,7 +85,7 @@ const config: Config = {
 					type: 'docSidebar',
 					sidebarId: 'tutorialSidebar',
 					position: 'left',
-					label: 'Tutorial',
+					label: 'Documentation',
 				},
 				{
 					href: 'https://github.com/PlanBGmbH/pb-dpf-ng-form-cache-library',
@@ -101,8 +101,8 @@ const config: Config = {
 					title: 'Docs',
 					items: [
 						{
-							label: 'Tutorial',
-							to: '/docs/category/tutorials',
+							label: 'Documentation',
+							to: '/docs/category/getting-started',
 						},
 					],
 				},
