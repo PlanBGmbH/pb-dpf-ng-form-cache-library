@@ -19,7 +19,7 @@ const config: Config = {
 	},
 
 	// Set the production url of your site here
-	url: 'https://your-docusaurus-site.example.com',
+	url: 'https://planbgmbh.github.io',
 	// Set the /<baseUrl>/ pathname under which your site is served
 	// For GitHub pages deployment, it is often '/<projectName>/'
 	baseUrl: '/pb-dpf-ng-form-cache-library/',
@@ -37,6 +37,12 @@ const config: Config = {
 	i18n: {
 		defaultLocale: 'en',
 		locales: ['en'],
+	},
+
+	markdown: {
+		hooks: {
+			onBrokenMarkdownLinks: 'warn',
+		},
 	},
 
 	presets: [
