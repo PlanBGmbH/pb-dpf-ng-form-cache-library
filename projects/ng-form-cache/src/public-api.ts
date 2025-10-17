@@ -11,6 +11,7 @@ export * from './lib/services/form-persistence';
 export * from './lib/services/local-storage';
 export * from './lib/services/session-manager';
 export * from './lib/types/persistence-config';
+export * from './lib/types/service-tokens';
 export * from './lib/types/storage-entity-data';
 export * from './lib/types/storage-key';
 export * from './lib/types/storage-metadata';
