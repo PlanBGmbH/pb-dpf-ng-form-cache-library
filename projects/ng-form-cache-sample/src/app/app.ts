@@ -1,6 +1,6 @@
 import { Component, inject } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule } from '@angular/forms';
-import { AutoSaveDirective, FormPersistenceService, StoredEntityData } from 'ng-form-cache';
+import { AutoSaveDirective, FORM_PERSISTENCE_SERVICE, StoredEntityData } from 'ng-form-cache';
 
 @Component({
 	selector: 'fc-root',
@@ -9,7 +9,7 @@ import { AutoSaveDirective, FormPersistenceService, StoredEntityData } from 'ng-
 	imports: [ReactiveFormsModule, AutoSaveDirective],
 })
 export class App {
-	private readonly formCacheService = inject(FormPersistenceService);
+	private readonly formCacheService = inject(FORM_PERSISTENCE_SERVICE);
 	public readonly form = inject(FormBuilder).group({
 		firstName: [''],
 		lastName: [''],
