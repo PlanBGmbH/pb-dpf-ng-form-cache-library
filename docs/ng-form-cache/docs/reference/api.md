@@ -114,3 +114,9 @@ Parses JSON and patches the form instance. Logs an error if parsing fails.
 - `FormCacheStorage`: Interface that custom storage implementations must satisfy.
 
 Use these types to add strong typing to your application layer or when writing custom adapters.
+
+## Persisted record policy
+
+Draft metadata and user indexes use schema version 1. Valid records from the original unversioned format are normalized on read and written as version 1 on the next save. Runtime checks validate metadata, timestamps, index fields, and ownership before records are used. The generic `getItem<T>()` remains a raw JSON API; use `getDraft()` and `getUserDraftIndex()` for validated cache records.
+
+Malformed JSON, invalid records, and unsupported versions are treated as unavailable and left in storage for application recovery. Explicitly saving to the same key replaces its contents. Cleanup and bulk deletion only follow keys belonging to validated drafts for the expected user; they do not erase unrelated data referenced by a damaged index. Payload types remain the application's responsibility.

@@ -131,7 +131,9 @@ export class FormPersistenceService implements OnDestroy {
 		const index = this.storageService.getUserDraftIndex(userId);
 		if (!index) return;
 		index.draftKeys.forEach((key) => {
-			this.storageService.removeItem(key);
+			if (key.startsWith(this.config.draftKeyPrefix) && this.storageService.getDraft(key)?.metadata.userId === userId) {
+				this.storageService.removeItem(key);
+			}
 		});
 		index.draftKeys = [];
 		index.lastActivity = Date.now();

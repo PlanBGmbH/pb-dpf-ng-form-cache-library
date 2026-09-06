@@ -1,5 +1,6 @@
 import { isPlatformBrowser } from '@angular/common';
 import { inject, Injectable, PLATFORM_ID } from '@angular/core';
+import { readDraft, readIndex } from '../helpers/storage-records';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FormCacheStorage } from '../types/storage-service';
@@ -108,7 +109,10 @@ export class LocalStorageService implements FormCacheStorage {
 	 */
 	public getUserDraftIndex(userId: string) {
 		const key = this.generateIndexKey(userId);
-		return this.getItem<UserDraftIndex>(key);
+		const index = readIndex(this.getItem<unknown>(key), userId);
+		if (!index) return;
+		index.draftKeys = index.draftKeys.filter((draftKey) => this.getDraft(draftKey)?.metadata.userId === userId);
+		return index;
 	}
 
 	/**
@@ -118,7 +122,7 @@ export class LocalStorageService implements FormCacheStorage {
 	 */
 	public setUserDraftIndex(userId: string, index: UserDraftIndex) {
 		const key = this.generateIndexKey(userId);
-		this.setItem(key, index);
+		this.setItem(key, { ...index, version: 1 });
 	}
 
 	/**
@@ -127,7 +131,10 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @returns The stored entity data, or null if not found.
 	 */
 	public getDraft<T>(key: string) {
-		return this.getItem<StoredEntityData<T>>(key);
+		if (!key.startsWith(this.config.draftKeyPrefix)) return;
+		const draft = readDraft<T>(this.getItem<unknown>(key));
+		if (!draft || key !== this.generateDraftKey(draft.metadata.userId, draft.entityType, draft.entityId ?? '')) return;
+		return draft;
 	}
 
 	/**
@@ -136,6 +143,6 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @param data The draft data to store.
 	 */
 	public setDraft(key: string, data: StoredEntityData) {
-		this.setItem(key, data);
+		this.setItem(key, { ...data, metadata: { ...data.metadata, version: 1 } });
 	}
 }

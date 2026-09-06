@@ -22,11 +22,13 @@ No package has been published.
 | Restore notifications | Restoring into a dirty form emitted changes and scheduled another save. | Restoration patches the form with `emitEvent: false`; the restore callback remains available. |
 | Sample and guides | Setup omitted session startup and claimed that provider registration automatically started cleanup. The sample therefore did not save in a fresh browser. | Sample and guides explicitly start/resume a matching session and start cleanup. Custom adapter examples now use matching prefixes. |
 
-## Improvements proposed for review — not implemented
+## Improvements tracked for review
 
 ### High priority: storage format and failure handling
 
-1. **Version and validate persisted records.** `LocalStorageService` currently trusts successfully parsed JSON to match TypeScript types. Valid JSON with missing metadata or invalid index fields can still break callers. Introduce runtime guards and a versioned migration policy for drafts and indexes. Decide whether invalid records should be quarantined, deleted, or surfaced to the application. Acceptance: malformed and older records never crash saving/restoration or delete unrelated data.
+1. **Implemented — version and validate persisted records.** `LocalStorageService` currently trusts successfully parsed JSON to match TypeScript types. Valid JSON with missing metadata or invalid index fields can still break callers. Introduce runtime guards and a versioned migration policy for drafts and indexes. Decide whether invalid records should be quarantined, deleted, or surfaced to the application. Acceptance: malformed and older records never crash saving/restoration or delete unrelated data.
+
+   Implemented schema guards for draft metadata and indexes, version 1 normalization for valid unversioned records, and ownership checks before following index keys. Invalid and unsupported records are ignored and preserved until explicitly overwritten; cleanup never follows unrelated or foreign keys. Regression tests cover malformed JSON, valid JSON with invalid fields, unknown versions, legacy records, and destructive operations.
 
 2. **Adopt unambiguous storage keys with a migration.** `generateDraftKey()` joins user ID, entity type, and entity ID with underscores. For example, `('a_b', 'c', 'd')` and `('a', 'b_c', 'd')` generate the same key. This is a remaining correctness risk for identifiers containing separators. Review an encoded tuple or a versioned key format, with identity-checked migration of old records and index updates. Until then, use identifiers without underscores in these three fields. Acceptance: adversarial identifiers cannot collide, and existing drafts remain recoverable.
 
