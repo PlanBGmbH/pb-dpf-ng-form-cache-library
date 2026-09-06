@@ -62,6 +62,7 @@ try {
 		);
 		const cli = join(consumer, 'node_modules/@angular/cli/bin/ng.js');
 		run(process.execPath, [cli, 'build'], consumer);
+		run(process.execPath, [join(consumer, 'server-check.mjs')], consumer);
 		run(process.execPath, [cli, 'test', '--watch=false', '--browsers=ChromeHeadless'], consumer);
 	}
 	rmSync(workspace, { recursive: true, force: true });

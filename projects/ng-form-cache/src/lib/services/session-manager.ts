@@ -1,4 +1,5 @@
-import { inject, Injectable, OnDestroy } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+import { inject, Injectable, OnDestroy, PLATFORM_ID } from '@angular/core';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
 
@@ -7,15 +8,16 @@ export class SessionManagerService implements OnDestroy {
 	private readonly storageService = inject(FORM_CACHE_STORAGE);
 	private readonly config = inject(FORM_CACHE_CONFIG);
 
+	private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 	private currentSessionId?: string;
 
 	public constructor() {
 		this.handleStorageChange = this.handleStorageChange.bind(this);
-		window.addEventListener('storage', this.handleStorageChange);
+		if (this.isBrowser) window.addEventListener('storage', this.handleStorageChange);
 	}
 
 	public ngOnDestroy() {
-		window.removeEventListener('storage', this.handleStorageChange);
+		if (this.isBrowser) window.removeEventListener('storage', this.handleStorageChange);
 	}
 
 	/**
@@ -40,7 +42,9 @@ export class SessionManagerService implements OnDestroy {
 			index.sessionId = '';
 			this.storageService.setUserDraftIndex(userId, index);
 		}
-		this.storageService.removeItem(this.config.sessionIdKey);
+		if (this.storageService.getItem<string>(this.config.sessionIdKey) === this.currentSessionId) {
+			this.storageService.removeItem(this.config.sessionIdKey);
+		}
 		this.currentSessionId = undefined;
 	}
 
@@ -86,7 +90,13 @@ export class SessionManagerService implements OnDestroy {
 	}
 
 	private handleStorageChange(event: StorageEvent) {
-		if (event.key !== this.config.sessionIdKey) return;
-		this.currentSessionId = event.newValue ? event.newValue : undefined;
+		if (event.key !== null && event.key !== this.config.sessionIdKey) return;
+		try {
+			if (event.storageArea && event.storageArea !== window.localStorage) return;
+			const value: unknown = event.newValue ? JSON.parse(event.newValue) : undefined;
+			this.currentSessionId = typeof value === 'string' ? value : undefined;
+		} catch {
+			this.currentSessionId = undefined;
+		}
 	}
 }

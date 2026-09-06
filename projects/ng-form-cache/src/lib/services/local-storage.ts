@@ -1,4 +1,5 @@
-import { inject, Injectable } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+import { inject, Injectable, PLATFORM_ID } from '@angular/core';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FormCacheStorage } from '../types/storage-service';
@@ -7,6 +8,22 @@ import { UserDraftIndex } from '../types/user-draft-index';
 @Injectable()
 export class LocalStorageService implements FormCacheStorage {
 	private readonly config = inject(FORM_CACHE_CONFIG);
+	private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
+
+	/** Returns a snapshot of the keys available to cleanup. */
+	public keys(): string[] {
+		if (!this.isBrowser) return [];
+		try {
+			const keys: string[] = [];
+			for (let i = 0; i < localStorage.length; i++) {
+				const key = localStorage.key(i);
+				if (key !== null) keys.push(key);
+			}
+			return keys;
+		} catch {
+			return [];
+		}
+	}
 
 	/**
 	 * Retrieves an item from local storage and deserializes it.
@@ -14,6 +31,7 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @returns The deserialized item, or null if not found or on error.
 	 */
 	public getItem<T>(key: string): T | undefined {
+		if (!this.isBrowser) return;
 		try {
 			const item = localStorage.getItem(key);
 			return item ? JSON.parse(item) : undefined;
@@ -29,6 +47,7 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @param value The value to store.
 	 */
 	public setItem<T>(key: string, value: T) {
+		if (!this.isBrowser) return;
 		try {
 			const item = JSON.stringify(value);
 			localStorage.setItem(key, item);
@@ -42,6 +61,7 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @param key The key of the item to remove.
 	 */
 	public removeItem(key: string) {
+		if (!this.isBrowser) return;
 		try {
 			localStorage.removeItem(key);
 		} catch (error) {
@@ -53,6 +73,7 @@ export class LocalStorageService implements FormCacheStorage {
 	 * Clears all items from local storage.
 	 */
 	public clear() {
+		if (!this.isBrowser) return;
 		try {
 			localStorage.clear();
 		} catch (error) {

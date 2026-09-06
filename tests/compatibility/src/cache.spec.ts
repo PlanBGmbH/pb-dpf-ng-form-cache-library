@@ -62,6 +62,19 @@ describe('Published package in a zoneless Angular consumer', () => {
 		expect(fixture.componentInstance.form.controls.name.value).toBe('Ada');
 	});
 
+	it('restores without emitting form changes or scheduling another save', async () => {
+		const service = TestBed.inject(FORM_PERSISTENCE_SERVICE);
+		service.saveDraft('profile', 'new', { name: 'Ada' });
+		const save = spyOn(service, 'autoSave');
+		const fixture = TestBed.createComponent(TestForm);
+		fixture.componentInstance.form.markAsDirty();
+		const changed = jasmine.createSpy('valueChanges');
+		fixture.componentInstance.form.valueChanges.subscribe(changed);
+		await fixture.whenStable();
+		expect(changed).not.toHaveBeenCalled();
+		expect(save).not.toHaveBeenCalled();
+	});
+
 	it('autosaves user edits and includes disabled controls without Zone.js', async () => {
 		const fixture = TestBed.createComponent(TestForm);
 		await fixture.whenStable();

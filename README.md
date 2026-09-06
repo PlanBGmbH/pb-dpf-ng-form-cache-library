@@ -84,4 +84,4 @@ flowchart TD
 
 ```
 
-The `Form_Initialization` part is handled automatically via the `fcAutoSave` directive. For deletion of a draft after form submit/save the user manually needs to call the delete function on the draft service. Cleanup processes are handled automatically by the cleanup service.
+The `Form_Initialization` part is handled automatically via the `fcAutoSave` directive. For deletion of a draft after form submit/save the user manually needs to call the delete function on the draft service. Call `CleanupService.start()` once during browser application startup to enable periodic cleanup. Start or resume a matching session with `SessionManagerService` before saving drafts; see the [quickstart](docs/ng-form-cache/docs/getting-started/quickstart.md).

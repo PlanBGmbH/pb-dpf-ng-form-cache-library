@@ -1,6 +1,12 @@
 import { Component, inject } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule } from '@angular/forms';
-import { AutoSaveDirective, FORM_PERSISTENCE_SERVICE, StoredEntityData } from 'ng-form-cache';
+import {
+	AutoSaveDirective,
+	CLEANUP_SERVICE,
+	FORM_PERSISTENCE_SERVICE,
+	SESSION_MANAGER_SERVICE,
+	StoredEntityData,
+} from 'ng-form-cache';
 
 @Component({
 	selector: 'fc-root',
@@ -19,7 +25,11 @@ export class App {
 	public constructor() {
 		// Set the user ID to some unique identifier from your oAuth user or similar.
 		// In this demo I am using this fix ID for now
-		this.formCacheService.setUserId('SOME_USER_ID_HERE');
+		const userId = 'SOME_USER_ID_HERE';
+		const session = inject(SESSION_MANAGER_SERVICE);
+		if (!session.isSessionValid(userId)) session.startSession(userId);
+		this.formCacheService.setUserId(userId);
+		inject(CLEANUP_SERVICE).start();
 	}
 
 	public notify(draft: StoredEntityData<unknown>) {
