@@ -124,4 +124,80 @@ describe('Persisted storage safety', () => {
 			expect(storage.getDraft(otherKey)).toBeDefined();
 		}
 	});
+	it('uses distinct keys for adversarial identifier tuples, including legacy-looking strings', () => {
+		const { storage } = setup();
+		const parts = ['', '_', 'a_b', 'b_c', ':', '%', 'v2:', '"[,]\\', '\ud800', '😀'];
+		const keys = new Set<string>();
+		for (const user of parts)
+			for (const type of parts)
+				for (const id of parts) {
+					const key = storage.generateDraftKey(user, type, id);
+					expect(key.slice(defaultConfig.draftKeyPrefix.length)).not.toContain('_');
+					keys.add(key);
+				}
+		expect(keys.size).toBe(parts.length ** 3);
+		expect(storage.generateDraftKey('a_b', 'c', 'd')).not.toBe(storage.generateDraftKey('a', 'b_c', 'd'));
+	});
+
+	it('migrates a matching legacy draft and index without exposing it to a colliding identity', () => {
+		const { persistence, storage, session } = setup();
+		session.startSession('a_b');
+		persistence.setUserId('a_b');
+		persistence.saveDraft('c', 'd', { secret: true });
+		const key = storage.generateDraftKey('a_b', 'c', 'd');
+		const legacyKey = `${defaultConfig.draftKeyPrefix}a_b_c_d`;
+		localStorage.setItem(legacyKey, localStorage.getItem(key)!);
+		localStorage.removeItem(key);
+		storage.setUserDraftIndex('a_b', {
+			...JSON.parse(localStorage.getItem(storage.generateIndexKey('a_b'))!),
+			draftKeys: [legacyKey],
+		});
+		persistence.setUserId('a');
+		expect(persistence.loadDraft('b_c', 'd')).toBeUndefined();
+		persistence.deleteDraft('b_c', 'd');
+		expect(localStorage.getItem(legacyKey)).not.toBeNull();
+		persistence.setUserId('a_b');
+		expect(persistence.loadDraft('c', 'd')?.formData).toEqual({ secret: true });
+		expect(localStorage.getItem(legacyKey)).toBeNull();
+		expect(storage.getUserDraftIndex('a_b')?.draftKeys).toEqual([key]);
+	});
+
+	it('keeps legacy data recoverable when migration writes fail', () => {
+		const { persistence, storage } = setup();
+		persistence.saveDraft('profile', '1', { keep: true });
+		const key = storage.generateDraftKey('alice', 'profile', '1');
+		const legacyKey = `${defaultConfig.draftKeyPrefix}alice_profile_1`;
+		localStorage.setItem(legacyKey, localStorage.getItem(key)!);
+		localStorage.removeItem(key);
+		const indexKey = storage.generateIndexKey('alice');
+		localStorage.setItem(
+			indexKey,
+			JSON.stringify({ ...JSON.parse(localStorage.getItem(indexKey)!), draftKeys: [legacyKey] }),
+		);
+		const write = spyOn(storage, 'setDraft').and.stub();
+		expect(persistence.loadDraft('profile', '1')?.formData).toEqual({ keep: true });
+		expect(localStorage.getItem(legacyKey)).not.toBeNull();
+		write.and.callThrough();
+		spyOn(storage, 'setUserDraftIndex').and.stub();
+		expect(persistence.loadDraft('profile', '1')?.formData).toEqual({ keep: true });
+		expect(localStorage.getItem(legacyKey)).not.toBeNull();
+		persistence.deleteDraft('profile', '1');
+		expect(localStorage.getItem(legacyKey)).toBeNull();
+		expect(persistence.loadDraft('profile', '1')).toBeUndefined();
+	});
+	it('does not replace an unsupported or malformed destination while reading a legacy draft', () => {
+		const { persistence, storage } = setup();
+		persistence.saveDraft('profile', '1', {});
+		const key = storage.generateDraftKey('alice', 'profile', '1');
+		const legacyKey = `${defaultConfig.draftKeyPrefix}alice_profile_1`;
+		localStorage.setItem(legacyKey, localStorage.getItem(key)!);
+		spyOn(console, 'error');
+		for (const raw of ['{invalid', '{"metadata":{"version":99}}']) {
+			localStorage.setItem(key, raw);
+			expect(persistence.loadDraft('profile', '1')).toBeUndefined();
+			expect(localStorage.getItem(key)).toBe(raw);
+			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+			expect(localStorage.getItem(legacyKey)).not.toBeNull();
+		}
+	});
 });

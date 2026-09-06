@@ -120,3 +120,9 @@ Use these types to add strong typing to your application layer or when writing c
 Draft metadata and user indexes use schema version 1. Valid records from the original unversioned format are normalized on read and written as version 1 on the next save. Runtime checks validate metadata, timestamps, index fields, and ownership before records are used. The generic `getItem<T>()` remains a raw JSON API; use `getDraft()` and `getUserDraftIndex()` for validated cache records.
 
 Malformed JSON, invalid records, and unsupported versions are treated as unavailable and left in storage for application recovery. Explicitly saving to the same key replaces its contents. Cleanup and bulk deletion only follow keys belonging to validated drafts for the expected user; they do not erase unrelated data referenced by a damaged index. Payload types remain the application's responsibility.
+
+### Draft key migration
+
+The built-in adapter generates `draftKeyPrefix + "v2:" + encodeURIComponent(JSON.stringify([userId, entityType, entityId]))`, additionally escaping underscores as `%5F`. Tuple encoding supports separators, Unicode, and empty identifiers without collisions; escaping underscores prevents overlap with legacy keys. Index keys retain their existing format. Treat storage keys as opaque and always use the adapter's key generation methods.
+
+Reading an old draft by its identity migrates it and updates its user index. Migration requires all identity fields to match and retains the old copy unless both writes can be verified. Existing drafts that already collided in the old format cannot be reconstructed if previously overwritten. Optional `FormCacheStorage.removeDraft(key)` allows adapters to erase identity-checked legacy copies during deletion.

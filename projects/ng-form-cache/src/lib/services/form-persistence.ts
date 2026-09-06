@@ -93,7 +93,7 @@ export class FormPersistenceService implements OnDestroy {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
 		const draft = this.storageService.getDraft<T>(key);
 		if (draft && draft.metadata.expiresAt <= Date.now()) {
-			this.storageService.removeItem(key);
+			this.removeStoredDraft(key);
 			this.removeDraftFromIndex(this.userId(), key);
 			return undefined;
 		}
@@ -108,7 +108,7 @@ export class FormPersistenceService implements OnDestroy {
 	public deleteDraft(entityType: string, entityId: string) {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
 		this.cancelPendingSave(key);
-		this.storageService.removeItem(key);
+		this.removeStoredDraft(key);
 		this.removeDraftFromIndex(this.userId(), key);
 	}
 
@@ -132,12 +132,17 @@ export class FormPersistenceService implements OnDestroy {
 		if (!index) return;
 		index.draftKeys.forEach((key) => {
 			if (key.startsWith(this.config.draftKeyPrefix) && this.storageService.getDraft(key)?.metadata.userId === userId) {
-				this.storageService.removeItem(key);
+				this.removeStoredDraft(key);
 			}
 		});
 		index.draftKeys = [];
 		index.lastActivity = Date.now();
 		this.storageService.setUserDraftIndex(userId, index);
+	}
+
+	private removeStoredDraft(key: string) {
+		if (this.storageService.removeDraft) this.storageService.removeDraft(key);
+		else this.storageService.removeItem(key);
 	}
 
 	private updateUserIndex(userId: string, draftKey: string) {

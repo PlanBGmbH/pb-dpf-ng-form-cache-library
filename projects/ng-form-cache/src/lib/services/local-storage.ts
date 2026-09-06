@@ -90,7 +90,8 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @returns The generated storage key.
 	 */
 	public generateDraftKey(userId: string, entityType: string, entityId: string) {
-		return `${this.config.draftKeyPrefix}${userId}_${entityType}_${entityId}`;
+		// Escape underscores too: the new suffix cannot overlap any legacy three-part key.
+		return `${this.config.draftKeyPrefix}v2:${encodeURIComponent(JSON.stringify([userId, entityType, entityId])).replace(/_/g, '%5F')}`;
 	}
 
 	/**
@@ -111,7 +112,23 @@ export class LocalStorageService implements FormCacheStorage {
 		const key = this.generateIndexKey(userId);
 		const index = readIndex(this.getItem<unknown>(key), userId);
 		if (!index) return;
-		index.draftKeys = index.draftKeys.filter((draftKey) => this.getDraft(draftKey)?.metadata.userId === userId);
+		index.draftKeys = [
+			...new Set(
+				index.draftKeys.flatMap((draftKey) => {
+					const draft = this.getDraft(draftKey);
+					if (draft?.metadata.userId !== userId) return [];
+					const canonical = this.generateDraftKey(userId, draft.entityType, draft.entityId ?? '');
+					this.getDraft(canonical);
+					const stored = readDraft(this.getItem(canonical));
+					return [
+						stored &&
+						this.generateDraftKey(stored.metadata.userId, stored.entityType, stored.entityId ?? '') === canonical
+							? canonical
+							: draftKey,
+					];
+				}),
+			),
+		];
 		return index;
 	}
 
@@ -133,8 +150,76 @@ export class LocalStorageService implements FormCacheStorage {
 	public getDraft<T>(key: string) {
 		if (!key.startsWith(this.config.draftKeyPrefix)) return;
 		const draft = readDraft<T>(this.getItem<unknown>(key));
-		if (!draft || key !== this.generateDraftKey(draft.metadata.userId, draft.entityType, draft.entityId ?? '')) return;
-		return draft;
+		if (
+			draft &&
+			(key === this.generateDraftKey(draft.metadata.userId, draft.entityType, draft.entityId ?? '') ||
+				key === this.legacyDraftKey(draft.metadata.userId, draft.entityType, draft.entityId ?? ''))
+		)
+			return draft;
+		// Never overwrite malformed or unsupported data as a side effect of reading.
+		if (this.getItem<unknown>(key) !== undefined || this.keys().includes(key)) return;
+		const identity = this.parseDraftKey(key);
+		if (!identity) return;
+		const [userId, entityType, entityId] = identity;
+		const legacyKey = this.legacyDraftKey(userId, entityType, entityId);
+		const legacy = readDraft<T>(this.getItem<unknown>(legacyKey));
+		if (
+			!legacy ||
+			legacy.metadata.userId !== userId ||
+			legacy.entityType !== entityType ||
+			(legacy.entityId ?? '') !== entityId
+		)
+			return;
+		this.setDraft(key, legacy);
+		if (JSON.stringify(this.getItem(key)) !== JSON.stringify(legacy)) return legacy;
+		const indexKey = this.generateIndexKey(userId);
+		const index = readIndex(this.getItem(indexKey), userId);
+		if (index) {
+			index.draftKeys = [...new Set([...index.draftKeys.filter((item) => item !== legacyKey), key])];
+			this.setUserDraftIndex(userId, index);
+			if (readIndex(this.getItem(indexKey), userId)?.draftKeys.includes(key)) this.removeItem(legacyKey);
+		}
+		return legacy;
+	}
+
+	/** Removes both key formats, only following an identity-checked legacy record. */
+	public removeDraft(key: string): void {
+		const identity = this.parseDraftKey(key);
+		if (identity) {
+			const [userId, entityType, entityId] = identity;
+			const legacyKey = this.legacyDraftKey(userId, entityType, entityId);
+			const legacy = readDraft(this.getItem(legacyKey));
+			if (
+				legacy?.metadata.userId === userId &&
+				legacy.entityType === entityType &&
+				(legacy.entityId ?? '') === entityId
+			) {
+				this.removeItem(legacyKey);
+			}
+		}
+		this.removeItem(key);
+	}
+
+	private legacyDraftKey(userId: string, entityType: string, entityId: string) {
+		return `${this.config.draftKeyPrefix}${userId}_${entityType}_${entityId}`;
+	}
+
+	private parseDraftKey(key: string): [string, string, string] | undefined {
+		const prefix = `${this.config.draftKeyPrefix}v2:`;
+		if (!key.startsWith(prefix)) return;
+		try {
+			const value: unknown = JSON.parse(decodeURIComponent(key.slice(prefix.length)));
+			if (
+				Array.isArray(value) &&
+				value.length === 3 &&
+				value.every((part) => typeof part === 'string') &&
+				this.generateDraftKey(value[0], value[1], value[2]) === key
+			)
+				return value as [string, string, string];
+		} catch {
+			/* A legacy key may happen to start with the version marker. */
+		}
+		return;
 	}
 
 	/**

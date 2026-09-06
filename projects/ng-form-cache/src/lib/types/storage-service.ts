@@ -14,6 +14,8 @@ export interface FormCacheStorage {
 	getItem<T>(key: string): T | undefined;
 	setItem<T>(key: string, value: T): void;
 	removeItem(key: string): void;
+	/** Delete a draft and any identity-checked legacy copy. */
+	removeDraft?(key: string): void;
 	clear(): void;
 
 	generateDraftKey(userId: string, entityType: string, entityId: string): string;
