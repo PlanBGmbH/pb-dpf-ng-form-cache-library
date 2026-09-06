@@ -24,21 +24,15 @@ No package has been published.
 
 ## Improvements tracked for review
 
-### High priority: storage format and failure handling
+### High priority: storage format and failure handling — implemented
 
-1. **Implemented — version and validate persisted records.** `LocalStorageService` currently trusts successfully parsed JSON to match TypeScript types. Valid JSON with missing metadata or invalid index fields can still break callers. Introduce runtime guards and a versioned migration policy for drafts and indexes. Decide whether invalid records should be quarantined, deleted, or surfaced to the application. Acceptance: malformed and older records never crash saving/restoration or delete unrelated data.
+1. **Version and validate persisted records.** Draft metadata and user indexes now have runtime guards. Valid unversioned records normalize to schema version 1 and persist that version on the next write. Invalid or unsupported records remain available for application recovery but are ignored by typed cache reads. Cleanup and deletion validate draft ownership before following index keys. Tests cover malformed JSON, invalid metadata/index fields, unknown versions, legacy records, and unrelated data protection.
 
-   Implemented schema guards for draft metadata and indexes, version 1 normalization for valid unversioned records, and ownership checks before following index keys. Invalid and unsupported records are ignored and preserved until explicitly overwritten; cleanup never follows unrelated or foreign keys. Regression tests cover malformed JSON, valid JSON with invalid fields, unknown versions, legacy records, and destructive operations.
+2. **Adopt unambiguous storage keys with a migration.** Draft keys now use a versioned, percent-encoded JSON tuple. Underscores are escaped too, keeping the new and legacy key spaces disjoint. Migration verifies all three identity fields and retains legacy data until the new record and index entry are confirmed written. Deletion checks the identity of legacy copies. Tests cover 1,000 adversarial tuples, separator collisions, Unicode, interrupted migration, and damaged destinations. Previously overwritten legacy collisions cannot be reconstructed.
 
-2. **Implemented — adopt unambiguous storage keys with a migration.** `generateDraftKey()` joins user ID, entity type, and entity ID with underscores. For example, `('a_b', 'c', 'd')` and `('a', 'b_c', 'd')` generate the same key. This is a remaining correctness risk for identifiers containing separators. Review an encoded tuple or a versioned key format, with identity-checked migration of old records and index updates.  Acceptance: adversarial identifiers cannot collide, and existing drafts remain recoverable.
+3. **Expose storage write outcomes.** Optional synchronous `StorageWriteResult` returns preserve existing void adapters. The built-in adapter reports quota, access, serialization, and server unavailability failures. Quota recovery retries once after removing only expired drafts. Persistence exposes reactive per-draft states and distinguishes draft failures from index failures; failed draft writes never update the index. The sample displays status and offers retry. Tests cover failure reporting, bounded recovery, cancellation, and legacy adapters.
 
-   Draft keys now use a versioned, percent-encoded JSON tuple, with underscores escaped to keep the new and legacy key spaces disjoint. Reads migrate only records matching all three identifiers. Legacy copies are retained until the new record and index entry are confirmed; deletion checks legacy ownership too. Tests cover separator collisions, Unicode, failed migration writes, and recovery.
-
-3. **Implemented — expose storage write outcomes.** The built-in adapter logs quota/access/serialization failures and returns `void`, so persistence cannot distinguish a failed write from a successful one and may update the index anyway. Review a backward-compatible result or error notification API, a quota-recovery retry policy, and UI integration for failed saves. Acceptance: the app can distinguish saved, pending, and failed states, and failed writes do not create misleading index entries.
-
-   Optional synchronous write results preserve existing void adapters. The built-in adapter reports quota, access, serialization, and server unavailability failures. Quota errors trigger one retry after removing only expired drafts. Persistence exposes reactive per-draft states and distinguishes draft failures from index failures; the sample displays status and offers retry. Regressions verify failures, bounded recovery, cancellation, and legacy adapter compatibility.
-
-4. **Define cross-tab ownership and conflict behavior.** A single session key is shared by all tabs, while index updates use read/modify/write without conflict detection. Concurrent saves can lose index entries even though the drafts themselves exist. Decide between an application-wide session or per-tab sessions, and a conflict strategy (revision checks, Web Locks, or transactional IndexedDB). Acceptance: concurrent tabs do not silently lose discoverability of each other's drafts, and logout behavior is explicit.
+4. **Define cross-tab ownership and conflict behavior.** The built-in adapter treats draft records as authoritative and reconciles every index read against stored keys. Stale concurrent index writes cannot hide completed saves, and missing indexes are reconstructed. The last successful write wins for the same logical draft; payloads are not merged. Versioned application-wide sessions identify their owning user and resume across tabs. Validation reads persisted state immediately, while logout writes an immutable per-session revocation marker so it cannot erase a newer login. Drafts remain after logout; failed revocation writes are reported. Tests cover independent application instances, controlled read/write interleavings, a second browser document, lost indexes, logout races, delayed saves, and legacy session migration. Custom shared adapters must provide equivalent reconciliation or transactions; old adapters remain supported without inheriting this guarantee automatically.
 
 ### Medium priority: public API and lifecycle
 
@@ -70,3 +64,11 @@ No package has been published.
 - Local browser checks use headless Chromium via the installed Brave executable. CI uses ChromeHeadless.
 - Final checks passed: library and sample production builds, documentation production build, lint, formatting, and all 23 browser tests plus the server check in each of the four consumers (92 passing browser tests). No hosted CI runs or release workflows were triggered during this review.
 - The CI matrix currently covers Angular 20, 21, and 22. The local default also runs the Angular 20.0 / RxJS 6 baseline.
+
+### High-priority follow-up validation
+
+- All four high-priority improvements are implemented as separate conventional commits on `fix/general-fixes`.
+- The final packaged suite passes 48 browser tests and the server check in Angular 20.0.7, 20.3.30, 21.2.22, and 22.1.5: 192 passing browser tests and four passing server checks. The baseline still uses TypeScript 5.8 and RxJS 6.
+- Library, sample, and documentation production builds pass, as do lint, formatting, and conventional commit message validation.
+- Concurrency coverage includes independent service instances with controlled stale writes and shared localStorage in a second browser document. Same-draft writes use the documented last-successful-write-wins policy.
+- No package was published, and no new branches or worktrees were created. The original checkout's existing uncommitted changes were preserved.

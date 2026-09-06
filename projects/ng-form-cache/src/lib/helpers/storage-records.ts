@@ -44,3 +44,21 @@ export function readIndex(value: unknown, userId: string): UserDraftIndex | unde
 		return;
 	return { ...value, version: 1, draftKeys: [...new Set(value['draftKeys'])] } as UserDraftIndex;
 }
+
+export interface SessionRecord {
+	version: 1;
+	userId: string;
+	sessionId: string;
+}
+
+export function readSession(value: unknown): SessionRecord | undefined {
+	if (
+		!isRecord(value) ||
+		value['version'] !== 1 ||
+		typeof value['userId'] !== 'string' ||
+		typeof value['sessionId'] !== 'string' ||
+		!value['sessionId']
+	)
+		return;
+	return value as unknown as SessionRecord;
+}

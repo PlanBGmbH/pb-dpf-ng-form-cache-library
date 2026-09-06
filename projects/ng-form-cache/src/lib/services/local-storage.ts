@@ -142,27 +142,34 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @returns The user's draft index, or null if not found.
 	 */
 	public getUserDraftIndex(userId: string) {
-		const key = this.generateIndexKey(userId);
-		const index = readIndex(this.getItem<unknown>(key), userId);
-		if (!index) return;
-		index.draftKeys = [
-			...new Set(
-				index.draftKeys.flatMap((draftKey) => {
-					const draft = this.getDraft(draftKey);
-					if (draft?.metadata.userId !== userId) return [];
-					const canonical = this.generateDraftKey(userId, draft.entityType, draft.entityId ?? '');
-					this.getDraft(canonical);
-					const stored = readDraft(this.getItem(canonical));
-					return [
-						stored &&
-						this.generateDraftKey(stored.metadata.userId, stored.entityType, stored.entityId ?? '') === canonical
-							? canonical
-							: draftKey,
-					];
-				}),
-			),
-		];
-		return index;
+		const raw = this.getItem<unknown>(this.generateIndexKey(userId));
+		const index = readIndex(raw, userId);
+		// Preserve unsupported records rather than interpreting a future index format.
+		if (raw !== undefined && !index) return;
+		const drafts = new Map<string, { key: string; draft: StoredEntityData }>();
+		// Draft records are authoritative. A stale read/modify/write of the advisory index
+		// cannot hide a completed save: each read reconciles the backend's current keys.
+		for (const key of new Set([...this.keys(), ...(index?.draftKeys ?? [])])) {
+			if (!key.startsWith(this.config.draftKeyPrefix)) continue;
+			const draft = this.getDraft(key);
+			if (draft?.metadata.userId !== userId) continue;
+			const canonical = this.generateDraftKey(userId, draft.entityType, draft.entityId ?? '');
+			this.getDraft(canonical);
+			const stored = readDraft(this.getItem(canonical));
+			const hasCanonical =
+				stored && this.generateDraftKey(stored.metadata.userId, stored.entityType, stored.entityId ?? '') === canonical;
+			drafts.set(canonical, { key: hasCanonical ? canonical : key, draft: hasCanonical ? stored : draft });
+		}
+		if (!index && !drafts.size) return;
+		let lastActivity = index?.lastActivity ?? 0;
+		for (const { draft } of drafts.values()) lastActivity = Math.max(lastActivity, draft.metadata.lastModified);
+		return {
+			version: 1 as const,
+			userId,
+			sessionId: index?.sessionId ?? '',
+			draftKeys: [...drafts.values()].map(({ key }) => key),
+			lastActivity,
+		};
 	}
 
 	/**

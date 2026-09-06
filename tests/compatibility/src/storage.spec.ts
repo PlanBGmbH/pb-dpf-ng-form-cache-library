@@ -196,7 +196,7 @@ describe('Persisted storage safety', () => {
 			localStorage.setItem(key, raw);
 			expect(persistence.loadDraft('profile', '1')).toBeUndefined();
 			expect(localStorage.getItem(key)).toBe(raw);
-			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
 			expect(localStorage.getItem(legacyKey)).not.toBeNull();
 		}
 	});
