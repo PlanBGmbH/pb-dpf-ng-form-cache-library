@@ -1,0 +1,26 @@
+{
+	"version": 1,
+	"cli": { "analytics": false },
+	"projects": {
+		"consumer": {
+			"projectType": "application",
+			"root": "",
+			"sourceRoot": "src",
+			"architect": {
+				"build": {
+					"builder": "@angular/build:application",
+					"options": {
+						"browser": "src/main.ts",
+						"index": "src/index.html",
+						"tsConfig": "tsconfig.app.json",
+						"outputPath": "dist"
+					}
+				},
+				"test": {
+					"builder": "@angular/build:karma",
+					"options": { "tsConfig": "tsconfig.spec.json" }
+				}
+			}
+		}
+	}
+}
