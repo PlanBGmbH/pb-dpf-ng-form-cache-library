@@ -200,4 +200,77 @@ describe('Persisted storage safety', () => {
 			expect(localStorage.getItem(legacyKey)).not.toBeNull();
 		}
 	});
+	it('reports serialization failures without adding an index entry', () => {
+		const { persistence, storage } = setup();
+		const payload: { self?: unknown } = {};
+		payload.self = payload;
+		const result = persistence.saveDraft('profile', '1', payload);
+		expect(result).toEqual(
+			jasmine.objectContaining({ status: 'failed', phase: 'draft', reason: 'serialization', draftPersisted: false }),
+		);
+		expect(persistence.getSaveState('profile', '1')).toBe(result);
+		expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+		expect(persistence.loadDraft('profile', '1')).toBeUndefined();
+	});
+
+	it('reports access failures and thrown custom adapter failures', () => {
+		const { persistence, storage } = setup();
+		const write = spyOn(Storage.prototype, 'setItem').and.throwError(new DOMException('blocked', 'SecurityError'));
+		expect(persistence.saveDraft('profile', '1', {})).toEqual(
+			jasmine.objectContaining({ status: 'failed', reason: 'access', phase: 'draft' }),
+		);
+		expect(write).toHaveBeenCalledTimes(1);
+		write.and.callThrough();
+		spyOn(storage, 'setDraft').and.throwError(new Error('adapter offline'));
+		expect(() => persistence.saveDraft('profile', '1', {})).not.toThrow();
+		expect(persistence.getSaveState('profile', '1')).toEqual(
+			jasmine.objectContaining({ status: 'failed', reason: 'unknown' }),
+		);
+		expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+	});
+
+	it('retries quota failures once after evicting only expired drafts', () => {
+		const { persistence, storage } = setup();
+		persistence.saveDraft('profile', 'expired', {});
+		persistence.saveDraft('profile', 'active', {});
+		const expiredKey = storage.generateDraftKey('alice', 'profile', 'expired');
+		const expired = storage.getDraft(expiredKey)!;
+		storage.setDraft(expiredKey, { ...expired, metadata: { ...expired.metadata, expiresAt: 0 } });
+		localStorage.setItem('unrelated', 'keep');
+		const nativeWrite = Storage.prototype.setItem;
+		const target = storage.generateDraftKey('alice', 'profile', '1');
+		let attempts = 0;
+		spyOn(Storage.prototype, 'setItem').and.callFake(function (this: Storage, key: string, value: string) {
+			if (key === target && ++attempts === 1) throw new DOMException('full', 'QuotaExceededError');
+			nativeWrite.call(this, key, value);
+		});
+		expect(persistence.saveDraft('profile', '1', {})).toEqual({ status: 'saved' });
+		expect(attempts).toBe(2);
+		expect(localStorage.getItem(expiredKey)).toBeNull();
+		expect(persistence.hasDraft('profile', 'active')).toBeTrue();
+		expect(localStorage.getItem('unrelated')).toBe('keep');
+	});
+
+	it('reports persistent quota failure after exactly one retry', () => {
+		const { persistence, storage } = setup();
+		const write = spyOn(Storage.prototype, 'setItem').and.throwError(new DOMException('full', 'QuotaExceededError'));
+		expect(persistence.saveDraft('profile', '1', {})).toEqual(
+			jasmine.objectContaining({ status: 'failed', phase: 'draft', reason: 'quota' }),
+		);
+		expect(write).toHaveBeenCalledTimes(2);
+		expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+	});
+
+	it('reports index failures separately and allows an explicit retry', () => {
+		const { persistence, storage } = setup();
+		const write = spyOn(storage, 'setUserDraftIndex').and.returnValue({ success: false, reason: 'access' });
+		expect(persistence.saveDraft('profile', '1', { keep: true })).toEqual(
+			jasmine.objectContaining({ status: 'failed', phase: 'index', draftPersisted: true }),
+		);
+		expect(persistence.loadDraft('profile', '1')?.formData).toEqual({ keep: true });
+		expect(JSON.parse(localStorage.getItem(storage.generateIndexKey('alice'))!).draftKeys).toEqual([]);
+		write.and.callThrough();
+		expect(persistence.saveDraft('profile', '1', { keep: true })).toEqual({ status: 'saved' });
+		expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([storage.generateDraftKey('alice', 'profile', '1')]);
+	});
 });

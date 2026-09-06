@@ -1,5 +1,7 @@
 import { isPlatformBrowser } from '@angular/common';
 import { inject, Injectable, PLATFORM_ID } from '@angular/core';
+import { storageFailure } from '../helpers/storage-write';
+import { StorageWriteResult } from '../types/storage-write-result';
 import { readDraft, readIndex } from '../helpers/storage-records';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { StoredEntityData } from '../types/storage-entity-data';
@@ -47,13 +49,44 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @param key The key to store the item under.
 	 * @param value The value to store.
 	 */
-	public setItem<T>(key: string, value: T) {
-		if (!this.isBrowser) return;
+	public setItem<T>(key: string, value: T): void | StorageWriteResult {
+		if (!this.isBrowser) return { success: false, reason: 'unavailable' };
+		let item: string;
 		try {
-			const item = JSON.stringify(value);
-			localStorage.setItem(key, item);
+			const serialized = JSON.stringify(value);
+			if (serialized === undefined) throw new TypeError('Value cannot be serialized as JSON');
+			item = serialized;
 		} catch (error) {
-			console.error(`Error writing to local storage for key: ${key}`, error);
+			return { success: false, reason: 'serialization', error };
+		}
+		try {
+			localStorage.setItem(key, item);
+			return { success: true };
+		} catch (error) {
+			const failure = storageFailure(error);
+			if (failure.reason !== 'quota') return failure;
+			// One retry, removing only expired cache drafts. Preserve active drafts and unrelated data.
+			this.removeExpiredDrafts(key);
+			try {
+				localStorage.setItem(key, item);
+				return { success: true };
+			} catch (retryError) {
+				return storageFailure(retryError);
+			}
+		}
+	}
+
+	private removeExpiredDrafts(writingKey: string) {
+		for (const key of this.keys()) {
+			if (key === writingKey || !key.startsWith(this.config.draftKeyPrefix)) continue;
+			const draft = readDraft(this.getItem(key));
+			if (
+				draft &&
+				draft.metadata.expiresAt <= Date.now() &&
+				(key === this.generateDraftKey(draft.metadata.userId, draft.entityType, draft.entityId ?? '') ||
+					key === this.legacyDraftKey(draft.metadata.userId, draft.entityType, draft.entityId ?? ''))
+			)
+				this.removeItem(key);
 		}
 	}
 
@@ -137,9 +170,9 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @param userId The user's ID.
 	 * @param index The updated draft index.
 	 */
-	public setUserDraftIndex(userId: string, index: UserDraftIndex) {
+	public setUserDraftIndex(userId: string, index: UserDraftIndex): void | StorageWriteResult {
 		const key = this.generateIndexKey(userId);
-		this.setItem(key, { ...index, version: 1 });
+		return this.setItem(key, { ...index, version: 1 });
 	}
 
 	/**
@@ -227,7 +260,7 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @param key The key to store the draft under.
 	 * @param data The draft data to store.
 	 */
-	public setDraft(key: string, data: StoredEntityData) {
-		this.setItem(key, { ...data, metadata: { ...data.metadata, version: 1 } });
+	public setDraft(key: string, data: StoredEntityData): void | StorageWriteResult {
+		return this.setItem(key, { ...data, metadata: { ...data.metadata, version: 1 } });
 	}
 }

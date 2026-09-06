@@ -1,5 +1,6 @@
 import { InjectionToken } from '@angular/core';
 import { StoredEntityData } from './storage-entity-data';
+import { StorageWriteResult } from './storage-write-result';
 import { UserDraftIndex } from './user-draft-index';
 
 /**
@@ -12,7 +13,7 @@ export interface FormCacheStorage {
 	/** Snapshot of backend keys. Optional for existing adapters; required for background cleanup. */
 	keys?(): string[];
 	getItem<T>(key: string): T | undefined;
-	setItem<T>(key: string, value: T): void;
+	setItem<T>(key: string, value: T): void | StorageWriteResult;
 	removeItem(key: string): void;
 	/** Delete a draft and any identity-checked legacy copy. */
 	removeDraft?(key: string): void;
@@ -21,9 +22,9 @@ export interface FormCacheStorage {
 	generateDraftKey(userId: string, entityType: string, entityId: string): string;
 	generateIndexKey(userId: string): string;
 	getUserDraftIndex(userId: string): UserDraftIndex | undefined;
-	setUserDraftIndex(userId: string, index: UserDraftIndex): void;
+	setUserDraftIndex(userId: string, index: UserDraftIndex): void | StorageWriteResult;
 	getDraft<T>(key: string): StoredEntityData<T> | undefined;
-	setDraft(key: string, data: StoredEntityData): void;
+	setDraft(key: string, data: StoredEntityData): void | StorageWriteResult;
 }
 
 export const FORM_CACHE_STORAGE = new InjectionToken<FormCacheStorage>('form-cache.storage');

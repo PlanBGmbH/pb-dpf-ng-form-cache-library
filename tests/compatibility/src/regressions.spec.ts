@@ -235,4 +235,20 @@ describe('Draft lifecycle regressions', () => {
 		expect(run).not.toHaveBeenCalled();
 		expect(localStorage.length).toBe(0);
 	});
+	it('exposes reactive pending, saved, and cancelled states for each draft', () => {
+		const { persistence } = setup();
+		expect(persistence.getSaveState('profile', '1').status).toBe('idle');
+		persistence.autoSave(form('first'), 'profile', '1');
+		persistence.autoSave(form('second'), 'profile', '2');
+		expect(persistence.getSaveState('profile', '1').status).toBe('pending');
+		persistence.deleteDraft('profile', '2');
+		expect(persistence.getSaveState('profile', '2').status).toBe('cancelled');
+		jasmine.clock().tick(101);
+		expect(persistence.getSaveState('profile', '1').status).toBe('saved');
+	});
+
+	it('assumes success for legacy adapters returning void', () => {
+		const { persistence } = setup({ customStorage: true });
+		expect(persistence.saveDraft('profile', '1', {})).toEqual({ status: 'saved' });
+	});
 });
