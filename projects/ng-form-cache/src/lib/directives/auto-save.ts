@@ -48,7 +48,7 @@ export class AutoSaveDirective implements OnInit, OnDestroy {
 			return;
 		}
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		this.formGroupDirective.form.patchValue(draft.formData as any);
+		this.formGroupDirective.form.patchValue(draft.formData as any, { emitEvent: false });
 		if (!this.notifyFunc()) return;
 		this.notifyFunc()(draft);
 	}

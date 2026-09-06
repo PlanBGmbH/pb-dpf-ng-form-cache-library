@@ -23,11 +23,11 @@ To keep track of all keys that belong to a user, ng-form-cache maintains a `User
 
 ## Session tracking
 
-`SessionManagerService` assigns each browser tab (or application session) a generated id and stores it under the `sessionIdKey` (defaults to `app_current_session_id`). When a session starts or ends:
+`SessionManagerService` assigns the application session a generated id and stores it under the `sessionIdKey` (defaults to `app_current_session_id`). When a session starts or ends:
 
 1. The service writes the id into storage so other tabs stay in sync.
 2. The user draft index is updated with the new `sessionId` and `lastActivity` timestamp.
-3. When the tab closes or the session ends, the id is cleared to avoid resurrecting mixed drafts in the next login.
+3. Call `endSession(userId)` explicitly on logout. Closing a tab does not clear localStorage.
 
 You can query `sessionManagerService.isSessionValid(userId)` to confirm that the stored drafts belong to the active session.
 
@@ -46,9 +46,9 @@ When `[fcAutoLoad]="true"`, the directive loads the newest draft as soon as the 
 
 - **Expired drafts** — removes entries whose `expiresAt` timestamp is older than `Date.now()`.
 - **Stale sessions** — deletes a user's drafts if `lastActivity` exceeds the configured `staleThreshold`.
-- **Quota management** — when storage exceeds `storageQuota`, the oldest 20% of drafts are pruned.
+- **Quota management** — when storage exceeds `storageQuota`, oldest drafts are removed until the cache is within its approximate UTF-16 byte budget or no drafts remain. Only configured draft and index prefixes count toward the budget; unrelated application data is excluded. Index overhead can still exceed an extremely small budget.
 
-You can start or stop the scheduler manually (`cleanupService.start()` / `cleanupService.stop()`), but the default provider keeps it running in the background.
+Call `cleanupService.start()` once during browser application startup to enable periodic cleanup, or call `runCleanup()` for explicit maintenance. Registering the providers alone does not start the timer. The scheduler runs outside Angular's zone and stops when its injector is destroyed. No timer or browser storage access is started on the server.
 
 ## Configuration layers
 
@@ -67,4 +67,4 @@ All persistence goes through the `FormCacheStorage` interface. The library ships
 - Generate normalized draft and index keys so cleanup can detect relevant entries.
 - Fetch and store `StoredEntityData` instances as well as `UserDraftIndex` records.
 
-Because of this abstraction, you can synchronize drafts to remote APIs, use session storage, or encrypt data before writing to the browser.
+The adapter contract is synchronous. Session storage or an in-memory cache can implement it directly; a remote API needs a separate synchronization layer. Implement optional `keys(): string[]` to enable background cleanup. Older adapters without `keys()` still support saving and loading, but cleanup skips enumeration for them.

@@ -56,10 +56,9 @@ Even though the library ships providers and directives as standalone artifacts, 
    ```
 
 4. **Inject `FormPersistenceService` where needed**
-   The rest of the usage remains identical to the standalone tutorial: set the user id and decorate the form with `fcAutoSave`.
+   The rest of the usage remains identical to the standalone tutorial: start or resume a session, set the same user id, start cleanup once during application startup, and decorate the form with `fcAutoSave`.
 
 ## Notes
 
-- The directive requires Angular 20+ to be imported into an `NgModule`.
-- If you are locked to Angular < 20, the library cannot be used because it relies on standalone directives.
+- This package supports Angular 20, 21, and 22. Angular versions below 20 are outside its supported peer range.
 - When you migrate to full standalone bootstrap you can keep the same provider configuration—just move it into `bootstrapApplication`.

@@ -36,7 +36,7 @@ Follow these steps to add `@planbgmbh/ng-form-cache` to an Angular app that uses
    ```typescript title="feature/feature.component.ts"
    import { Component, inject } from '@angular/core';
    import { ReactiveFormsModule } from '@angular/forms';
-   import { AutoSaveDirective, FormPersistenceService } from '@planbgmbh/ng-form-cache';
+   import { AutoSaveDirective, CleanupService, FormPersistenceService, SessionManagerService } from '@planbgmbh/ng-form-cache';
 
    @Component({
      selector: 'feature-form',
@@ -47,7 +47,10 @@ Follow these steps to add `@planbgmbh/ng-form-cache` to an Angular app that uses
      private readonly formPersistence = inject(FormPersistenceService);
 
      constructor() {
+       const session = inject(SessionManagerService);
+       if (!session.isSessionValid('current-user-id')) session.startSession('current-user-id');
        this.formPersistence.setUserId('current-user-id');
+       inject(CleanupService).start();
      }
    }
    ```
@@ -61,6 +64,8 @@ Follow these steps to add `@planbgmbh/ng-form-cache` to an Angular app that uses
      <!-- controls -->
    </form>
    ```
+
+Start the session and cleanup once in your application startup or login flow; the example above shows the required calls.
 
 ## Verification checklist
 

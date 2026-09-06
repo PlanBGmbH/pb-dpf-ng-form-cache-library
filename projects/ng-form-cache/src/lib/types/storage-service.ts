@@ -9,6 +9,8 @@ import { UserDraftIndex } from './user-draft-index';
  * or storing it inside the session storage.
  */
 export interface FormCacheStorage {
+	/** Snapshot of backend keys. Optional for existing adapters; required for background cleanup. */
+	keys?(): string[];
 	getItem<T>(key: string): T | undefined;
 	setItem<T>(key: string, value: T): void;
 	removeItem(key: string): void;

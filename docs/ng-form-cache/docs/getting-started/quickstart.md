@@ -46,12 +46,12 @@ export const appConfig: ApplicationConfig = {
 
 ## 3. Build a reactive form component
 
-Inject the `FormPersistenceService` so you can identify the active user. In this simple example we set a mock identifier during construction.
+Start or resume a session for the authenticated user, then set the same user ID on `FormPersistenceService`. Start cleanup once during application startup. In this example the root component uses a mock user ID.
 
 ```typescript title="app/app.ts"
 import { Component, inject } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule } from '@angular/forms';
-import { AutoSaveDirective, FormPersistenceService } from '@planbgmbh/ng-form-cache';
+import { AutoSaveDirective, CleanupService, FormPersistenceService, SessionManagerService } from '@planbgmbh/ng-form-cache';
 
 @Component({
   selector: 'fc-root',
@@ -70,7 +70,10 @@ export class AppComponent {
   });
 
   constructor() {
+    const session = inject(SessionManagerService);
+    if (!session.isSessionValid('demo-user')) session.startSession('demo-user');
     this.formCache.setUserId('demo-user');
+    inject(CleanupService).start();
   }
 }
 ```

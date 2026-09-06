@@ -22,6 +22,8 @@ Factory that returns the provider array required to wire up the library. Use it 
   - `cleanupInterval`: how often `CleanupService` runs.
   - `staleThreshold`: inactivity threshold before user sessions are considered stale.
   - `storageQuota`: approximate storage size in bytes before quota cleanup kicks in.
+Class injection for `FormPersistenceService`, `SessionManagerService`, and `CleanupService` resolves to the same instances as the corresponding tokens.
+
 - `storageClass`: optional `Type` that implements `FormCacheStorage`. Defaults to `LocalStorageService`.
 
 ### `defaultConfig`
@@ -58,11 +60,11 @@ Handles serialization, persistence, and index management.
 
 | Method | Description |
 | --- | --- |
-| `setUserId(id: string \| number)` | Registers the active user. Must be called before saving or loading drafts. |
-| `autoSave(form: FormGroup, entityType: string, entityId: string)` | Debounced entry point used by the directive. |
+| `setUserId(id: string \| number)` | Registers the active user and cancels pending saves when the user changes. Start or resume a matching session before saving. |
+| `autoSave(form: FormGroup, entityType: string, entityId: string)` | Debounced per entity; pending edits are discarded after user/session changes. |
 | `saveDraft(entityType: string, entityId: string, formData: unknown)` | Immediately persist a custom payload. |
-| `loadDraft<T>(entityType: string, entityId: string): StoredEntityData<T> \| undefined` | Return the draft for the entity if it exists. |
-| `deleteDraft(entityType: string, entityId: string)` | Remove a single draft and update the user index. |
+| `loadDraft<T>(entityType: string, entityId: string): StoredEntityData<T> \| undefined` | Return an unexpired draft; expired drafts and their index entries are removed. |
+| `deleteDraft(entityType: string, entityId: string)` | Cancel pending saves, remove a single draft, and update the user index. |
 | `deleteAllDrafts()` | Clears every draft for the current user and resets the index. |
 | `hasDraft(entityType: string, entityId: string)` | Boolean convenience wrapper around `loadDraft`. |
 
@@ -79,7 +81,7 @@ Manages session identifiers and synchronizes them across tabs.
 
 ### `CleanupService`
 
-Runs periodic maintenance tasks against the storage backend.
+Runs maintenance against the configured storage backend. Call `start()` explicitly to enable the browser timer. Adapters must implement optional `keys()` for enumeration.
 
 | Method | Description |
 | --- | --- |
@@ -89,7 +91,7 @@ Runs periodic maintenance tasks against the storage backend.
 
 ### `LocalStorageService`
 
-Default `FormCacheStorage` adapter that persists JSON to `window.localStorage`. Implements all interface methods and prefixes keys using `FormCacheConfig`.
+Default `FormCacheStorage` adapter that persists JSON to `window.localStorage`, with a `keys()` snapshot for cleanup. Browser storage operations become no-ops on the server. Implements all interface methods and prefixes keys using `FormCacheConfig`.
 
 ## Utility functions
 

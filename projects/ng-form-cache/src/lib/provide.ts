@@ -1,5 +1,6 @@
 import { Provider, Type } from '@angular/core';
-import { FORM_CACHE_STORAGE, LocalStorageService } from '../public-api';
+import { LocalStorageService } from './services/local-storage';
+import { FORM_CACHE_STORAGE } from './types/storage-service';
 import { FORM_CACHE_CONFIG, FormCacheConfig } from './config/cache-config';
 import { CleanupService } from './services/cleanup';
 import { FormPersistenceService } from './services/form-persistence';
@@ -15,6 +16,9 @@ export function provideFormCacheStorage(
 	storageClass?: Type<unknown>,
 ): Provider[] {
 	return [
+		{ provide: CleanupService, useExisting: CLEANUP_SERVICE },
+		{ provide: SessionManagerService, useExisting: SESSION_MANAGER_SERVICE },
+		{ provide: FormPersistenceService, useExisting: FORM_PERSISTENCE_SERVICE },
 		{
 			provide: CLEANUP_SERVICE,
 			useClass: CleanupService,

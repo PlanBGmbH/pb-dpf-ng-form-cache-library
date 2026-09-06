@@ -1,7 +1,5 @@
 import { inject, Injectable, OnDestroy, signal } from '@angular/core';
 import { FormGroup } from '@angular/forms';
-import { Subject } from 'rxjs';
-import { debounceTime, takeUntil } from 'rxjs/operators';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
 import { SESSION_MANAGER_SERVICE } from '../types/service-tokens';
@@ -15,28 +13,16 @@ export class FormPersistenceService implements OnDestroy {
 	private readonly config = inject(FORM_CACHE_CONFIG);
 	private readonly sessionManagerService = inject(SESSION_MANAGER_SERVICE);
 	private readonly userId = signal<string>('');
-	private readonly autoSaveSubject = new Subject<{
-		form: FormGroup;
-		entityType: string;
-		entityId: string;
-	}>();
-	private readonly destroy$ = new Subject<void>();
-
-	public constructor() {
-		this.autoSaveSubject
-			.pipe(debounceTime(this.config.autoSaveDebounceTime), takeUntil(this.destroy$))
-			.subscribe(({ form, entityType, entityId }) => {
-				this.saveDraft(entityType, entityId, form.getRawValue());
-			});
-	}
+	private readonly pendingSaves = new Map<string, ReturnType<typeof setTimeout>>();
 
 	public ngOnDestroy() {
-		this.destroy$.next();
-		this.destroy$.complete();
+		this.cancelPendingSaves();
 	}
 
 	public setUserId(id: string | number) {
-		this.userId.set(String(id));
+		const userId = String(id);
+		if (userId !== this.userId()) this.cancelPendingSaves();
+		this.userId.set(userId);
 	}
 
 	/**
@@ -46,7 +32,20 @@ export class FormPersistenceService implements OnDestroy {
 	 * @param entityId The ID of the entity.
 	 */
 	public autoSave(form: FormGroup, entityType: string, entityId: string): void {
-		this.autoSaveSubject.next({ form, entityType, entityId });
+		const userId = this.userId();
+		const sessionId = this.sessionManagerService.getSessionId();
+		if (!userId || !sessionId || !this.sessionManagerService.isSessionValid(userId)) return;
+		const key = this.storageService.generateDraftKey(userId, entityType, entityId);
+		const formData = form.getRawValue();
+		this.cancelPendingSave(key);
+		this.pendingSaves.set(
+			key,
+			setTimeout(() => {
+				this.pendingSaves.delete(key);
+				if (this.userId() !== userId || this.sessionManagerService.getSessionId() !== sessionId) return;
+				this.saveDraft(entityType, entityId, formData);
+			}, this.config.autoSaveDebounceTime),
+		);
 	}
 
 	/**
@@ -57,9 +56,10 @@ export class FormPersistenceService implements OnDestroy {
 	 */
 	public saveDraft(entityType: string, entityId: string, formData: unknown) {
 		const sessionId = this.sessionManagerService.getSessionId();
-		if (!sessionId) return;
+		if (!this.userId() || !sessionId || !this.sessionManagerService.isSessionValid(this.userId())) return;
 
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
+		this.cancelPendingSave(key);
 		const now = Date.now();
 		const ttl = this.persistentConfig.ttl;
 
@@ -91,7 +91,13 @@ export class FormPersistenceService implements OnDestroy {
 	 */
 	public loadDraft<T>(entityType: string, entityId: string) {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
-		return this.storageService.getDraft<T>(key);
+		const draft = this.storageService.getDraft<T>(key);
+		if (draft && draft.metadata.expiresAt <= Date.now()) {
+			this.storageService.removeItem(key);
+			this.removeDraftFromIndex(this.userId(), key);
+			return undefined;
+		}
+		return draft;
 	}
 
 	/**
@@ -101,6 +107,7 @@ export class FormPersistenceService implements OnDestroy {
 	 */
 	public deleteDraft(entityType: string, entityId: string) {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
+		this.cancelPendingSave(key);
 		this.storageService.removeItem(key);
 		this.removeDraftFromIndex(this.userId(), key);
 	}
@@ -119,6 +126,7 @@ export class FormPersistenceService implements OnDestroy {
 	 * Deletes all drafts for the current user.
 	 */
 	public deleteAllDrafts() {
+		this.cancelPendingSaves();
 		const userId = this.userId();
 		const index = this.storageService.getUserDraftIndex(userId);
 		if (!index) return;
@@ -132,11 +140,10 @@ export class FormPersistenceService implements OnDestroy {
 
 	private updateUserIndex(userId: string, draftKey: string) {
 		const index = this.storageService.getUserDraftIndex(userId);
-		if (index && !index.draftKeys.includes(draftKey)) {
-			index.draftKeys.push(draftKey);
-			index.lastActivity = Date.now();
-			this.storageService.setUserDraftIndex(userId, index);
-		}
+		if (!index) return;
+		if (!index.draftKeys.includes(draftKey)) index.draftKeys.push(draftKey);
+		index.lastActivity = Date.now();
+		this.storageService.setUserDraftIndex(userId, index);
 	}
 
 	private removeDraftFromIndex(userId: string, draftKey: string) {
@@ -145,5 +152,15 @@ export class FormPersistenceService implements OnDestroy {
 		index.draftKeys = index.draftKeys.filter((k) => k !== draftKey);
 		index.lastActivity = Date.now();
 		this.storageService.setUserDraftIndex(userId, index);
+	}
+	private cancelPendingSave(key: string) {
+		const timer = this.pendingSaves.get(key);
+		if (timer !== undefined) clearTimeout(timer);
+		this.pendingSaves.delete(key);
+	}
+
+	private cancelPendingSaves() {
+		for (const timer of this.pendingSaves.values()) clearTimeout(timer);
+		this.pendingSaves.clear();
 	}
 }

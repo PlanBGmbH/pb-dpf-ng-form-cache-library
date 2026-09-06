@@ -5,6 +5,37 @@
 > [!CAUTION]
 > This library is currently in development and has no release version yet!
 
+## Angular compatibility
+
+Supports Angular **20, 21, and 22**, including standalone applications and zoneless change detection.
+Use matching major versions of `@angular/common`, `@angular/core`, and `@angular/forms` in your application.
+RxJS `^6.5.3 || ^7.4.0` is a peer dependency, matching Angular's supported range.
+
+The published library is built with Angular 20 and partial-Ivy compilation. Keeping the build on the
+oldest supported Angular major preserves compatibility with Angular 20 consumers while newer
+applications link the package with their own compiler. See
+[Angular's library compatibility guidance](https://angular.dev/tools/libraries/creating-libraries#ensuring-library-version-compatibility).
+Future Angular majors should be added to the peer range after passing the compatibility suite.
+
+### Development and compatibility checks
+
+Use Node.js 24.15 or later in the 24.x line, which supports all three Angular majors
+([Angular compatibility table](https://angular.dev/reference/versions)).
+
+```sh
+npm ci
+npm run lint
+npm test
+```
+
+`npm test` builds the library once, packs it, and installs that artifact into isolated Angular 20,
+21, and 22 consumers. Each consumer compiles a standalone application and runs browser tests
+against the public package API with zoneless change detection. Chrome must be installed;
+set `CHROME_BIN` to use another Chromium executable. To check one major after building, run
+`npm run test:compatibility -- 21`. Temporary consumers are removed after successful checks and
+retained on failure for diagnosis. An additional Angular 20.0 / TypeScript 5.8 / RxJS 6 consumer
+checks the oldest supported Angular minor. CI runs each target separately.
+
 ## Basic architecture and flow
 
 This diagram shows the basic flow of the data inside the library
@@ -53,4 +84,4 @@ flowchart TD
 
 ```
 
-The `Form_Initialization` part is handled automatically via the `fcAutoSave` directive. For deletion of a draft after form submit/save the user manually needs to call the delete function on the draft service. Cleanup processes are handled automatically by the cleanup service.
+The `Form_Initialization` part is handled automatically via the `fcAutoSave` directive. For deletion of a draft after form submit/save the user manually needs to call the delete function on the draft service. Call `CleanupService.start()` once during browser application startup to enable periodic cleanup. Start or resume a matching session with `SessionManagerService` before saving drafts; see the [quickstart](docs/ng-form-cache/docs/getting-started/quickstart.md).
