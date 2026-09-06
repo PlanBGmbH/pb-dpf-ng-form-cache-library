@@ -42,6 +42,7 @@ try {
 				tslib: '^2.3.0',
 			},
 			devDependencies: {
+				esbuild: '^0.25.0',
 				'@angular/build': angularVersion,
 				'@angular/cli': angularVersion,
 				'@angular/compiler-cli': angularVersion,
@@ -62,7 +63,17 @@ try {
 		);
 		const cli = join(consumer, 'node_modules/@angular/cli/bin/ng.js');
 		run(process.execPath, [cli, 'build'], consumer);
-		run(process.execPath, [join(consumer, 'server-check.mjs')], consumer);
+		// Bundle just like an SSR build: RxJS 6 does not support native Node ESM directory imports.
+		run(
+			process.execPath,
+			[
+				'--input-type=module',
+				'--eval',
+				"import { buildSync } from 'esbuild'; buildSync({ entryPoints: ['server-check.mjs'], bundle: true, platform: 'node', format: 'cjs', outfile: 'server-check.cjs' });",
+			],
+			consumer,
+		);
+		run(process.execPath, [join(consumer, 'server-check.cjs')], consumer);
 		run(process.execPath, [cli, 'test', '--watch=false', '--browsers=ChromeHeadless'], consumer);
 	}
 	rmSync(workspace, { recursive: true, force: true });
