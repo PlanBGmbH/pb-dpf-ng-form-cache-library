@@ -3,6 +3,9 @@
  * This allows for quick retrieval and management of a user's drafts.
  */
 export interface UserDraftIndex {
+	/** Persisted schema version; omitted by legacy adapters and records. */
+	version?: 1;
+
 	/** The unique identifier of the user. */
 	userId: string;
 

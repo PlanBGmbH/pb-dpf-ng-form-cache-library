@@ -1,5 +1,7 @@
 import { inject, Injectable, OnDestroy, signal } from '@angular/core';
 import { FormGroup } from '@angular/forms';
+import { attemptWrite, storageFailure } from '../helpers/storage-write';
+import { DraftSaveState, StorageWriteResult } from '../types/storage-write-result';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
 import { SESSION_MANAGER_SERVICE } from '../types/service-tokens';
@@ -13,6 +15,20 @@ export class FormPersistenceService implements OnDestroy {
 	private readonly config = inject(FORM_CACHE_CONFIG);
 	private readonly sessionManagerService = inject(SESSION_MANAGER_SERVICE);
 	private readonly userId = signal<string>('');
+	private readonly states = signal<ReadonlyMap<string, DraftSaveState>>(new Map());
+	public readonly saveStates = this.states.asReadonly();
+
+	/** Reading this in a template reacts to save status changes. */
+	public getSaveState(entityType: string, entityId: string): DraftSaveState {
+		return (
+			this.states().get(this.storageService.generateDraftKey(this.userId(), entityType, entityId)) ?? { status: 'idle' }
+		);
+	}
+
+	private recordState(key: string, state: DraftSaveState): DraftSaveState {
+		this.states.update((states) => new Map(states).set(key, state));
+		return state;
+	}
 	private readonly pendingSaves = new Map<string, ReturnType<typeof setTimeout>>();
 
 	public ngOnDestroy() {
@@ -34,15 +50,22 @@ export class FormPersistenceService implements OnDestroy {
 	public autoSave(form: FormGroup, entityType: string, entityId: string): void {
 		const userId = this.userId();
 		const sessionId = this.sessionManagerService.getSessionId();
-		if (!userId || !sessionId || !this.sessionManagerService.isSessionValid(userId)) return;
+		if (!userId || !sessionId || !this.sessionManagerService.isSessionValid(userId)) {
+			this.saveDraft(entityType, entityId, form.getRawValue());
+			return;
+		}
 		const key = this.storageService.generateDraftKey(userId, entityType, entityId);
 		const formData = form.getRawValue();
 		this.cancelPendingSave(key);
+		this.recordState(key, { status: 'pending' });
 		this.pendingSaves.set(
 			key,
 			setTimeout(() => {
 				this.pendingSaves.delete(key);
-				if (this.userId() !== userId || this.sessionManagerService.getSessionId() !== sessionId) return;
+				if (this.userId() !== userId || this.sessionManagerService.getSessionId() !== sessionId) {
+					this.recordState(key, { status: 'cancelled' });
+					return;
+				}
 				this.saveDraft(entityType, entityId, formData);
 			}, this.config.autoSaveDebounceTime),
 		);
@@ -54,33 +77,48 @@ export class FormPersistenceService implements OnDestroy {
 	 * @param entityId The ID of the entity.
 	 * @param formData The data from the form.
 	 */
-	public saveDraft(entityType: string, entityId: string, formData: unknown) {
-		const sessionId = this.sessionManagerService.getSessionId();
-		if (!this.userId() || !sessionId || !this.sessionManagerService.isSessionValid(this.userId())) return;
-
+	public saveDraft(entityType: string, entityId: string, formData: unknown): DraftSaveState {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
 		this.cancelPendingSave(key);
-		const now = Date.now();
-		const ttl = this.persistentConfig.ttl;
-
-		const data: StoredEntityData = {
-			metadata: {
-				userId: this.userId(),
-				sessionId,
-				createdAt: this.storageService.getDraft(key)?.metadata.createdAt ?? now,
-				lastModified: now,
-				expiresAt: now + ttl,
-				version: 1,
-			},
-			formData,
-			entityType,
-			entityId,
-			isDirty: true,
-			autoSaveEnabled: true,
-		};
-
-		this.storageService.setDraft(key, data);
-		this.updateUserIndex(this.userId(), key);
+		let phase: 'session' | 'draft' | 'index' = 'session';
+		try {
+			const sessionId = this.sessionManagerService.getSessionId();
+			if (!this.userId() || !sessionId || !this.sessionManagerService.isSessionValid(this.userId())) {
+				return this.recordState(key, { status: 'failed', phase, reason: 'invalid-session', draftPersisted: false });
+			}
+			phase = 'draft';
+			const now = Date.now();
+			const data: StoredEntityData = {
+				metadata: {
+					userId: this.userId(),
+					sessionId,
+					createdAt: this.storageService.getDraft(key)?.metadata.createdAt ?? now,
+					lastModified: now,
+					expiresAt: now + this.persistentConfig.ttl,
+					version: 1,
+				},
+				formData,
+				entityType,
+				entityId,
+				isDirty: true,
+				autoSaveEnabled: true,
+			};
+			const draftResult = attemptWrite(() => this.storageService.setDraft(key, data));
+			if (!draftResult.success)
+				return this.recordState(key, { status: 'failed', phase, ...draftResult, draftPersisted: false });
+			phase = 'index';
+			const indexResult = this.updateUserIndex(this.userId(), key);
+			if (!indexResult.success)
+				return this.recordState(key, { status: 'failed', phase, ...indexResult, draftPersisted: true });
+			return this.recordState(key, { status: 'saved' });
+		} catch (error) {
+			return this.recordState(key, {
+				status: 'failed',
+				phase,
+				...storageFailure(error),
+				draftPersisted: phase === 'index',
+			});
+		}
 	}
 
 	/**
@@ -93,7 +131,7 @@ export class FormPersistenceService implements OnDestroy {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
 		const draft = this.storageService.getDraft<T>(key);
 		if (draft && draft.metadata.expiresAt <= Date.now()) {
-			this.storageService.removeItem(key);
+			this.removeStoredDraft(key);
 			this.removeDraftFromIndex(this.userId(), key);
 			return undefined;
 		}
@@ -108,7 +146,7 @@ export class FormPersistenceService implements OnDestroy {
 	public deleteDraft(entityType: string, entityId: string) {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
 		this.cancelPendingSave(key);
-		this.storageService.removeItem(key);
+		this.removeStoredDraft(key);
 		this.removeDraftFromIndex(this.userId(), key);
 	}
 
@@ -131,19 +169,26 @@ export class FormPersistenceService implements OnDestroy {
 		const index = this.storageService.getUserDraftIndex(userId);
 		if (!index) return;
 		index.draftKeys.forEach((key) => {
-			this.storageService.removeItem(key);
+			if (key.startsWith(this.config.draftKeyPrefix) && this.storageService.getDraft(key)?.metadata.userId === userId) {
+				this.removeStoredDraft(key);
+			}
 		});
 		index.draftKeys = [];
 		index.lastActivity = Date.now();
 		this.storageService.setUserDraftIndex(userId, index);
 	}
 
-	private updateUserIndex(userId: string, draftKey: string) {
+	private removeStoredDraft(key: string) {
+		if (this.storageService.removeDraft) this.storageService.removeDraft(key);
+		else this.storageService.removeItem(key);
+	}
+
+	private updateUserIndex(userId: string, draftKey: string): StorageWriteResult {
 		const index = this.storageService.getUserDraftIndex(userId);
-		if (!index) return;
+		if (!index) return { success: false, reason: 'unavailable' };
 		if (!index.draftKeys.includes(draftKey)) index.draftKeys.push(draftKey);
 		index.lastActivity = Date.now();
-		this.storageService.setUserDraftIndex(userId, index);
+		return attemptWrite(() => this.storageService.setUserDraftIndex(userId, index));
 	}
 
 	private removeDraftFromIndex(userId: string, draftKey: string) {
@@ -155,12 +200,15 @@ export class FormPersistenceService implements OnDestroy {
 	}
 	private cancelPendingSave(key: string) {
 		const timer = this.pendingSaves.get(key);
-		if (timer !== undefined) clearTimeout(timer);
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			this.recordState(key, { status: 'cancelled' });
+		}
 		this.pendingSaves.delete(key);
 	}
 
 	private cancelPendingSaves() {
-		for (const timer of this.pendingSaves.values()) clearTimeout(timer);
+		for (const key of this.pendingSaves.keys()) this.cancelPendingSave(key);
 		this.pendingSaves.clear();
 	}
 }
