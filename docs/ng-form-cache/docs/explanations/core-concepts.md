@@ -45,7 +45,7 @@ When `[fcAutoLoad]="true"`, the directive loads the newest draft as soon as the 
 `CleanupService` periodically executes three maintenance tasks:
 
 - **Expired drafts** — removes entries whose `expiresAt` timestamp is older than `Date.now()`.
-- **Stale sessions** — deletes a user's drafts if `lastActivity` exceeds the configured `staleThreshold`.
+- **Stale sessions** — deletes a user's drafts if `lastActivity` exceeds the configured `staleThreshold`. If the index's nonempty session id still matches the stored current session id, cleanup retains the empty index so an idle open form can autosave subsequent edits. Other stale indexes are removed. Cleanup does not recreate missing indexes or resume logged-out sessions.
 - **Quota management** — when storage exceeds `storageQuota`, oldest drafts are removed until the cache is within its approximate UTF-16 byte budget or no drafts remain. Only configured draft and index prefixes count toward the budget; unrelated application data is excluded. Index overhead can still exceed an extremely small budget.
 
 Call `cleanupService.start()` once during browser application startup to enable periodic cleanup, or call `runCleanup()` for explicit maintenance. Registering the providers alone does not start the timer. The scheduler runs outside Angular's zone and stops when its injector is destroyed. No timer or browser storage access is started on the server.
