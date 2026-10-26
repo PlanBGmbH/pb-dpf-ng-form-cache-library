@@ -211,6 +211,37 @@ describe('Draft lifecycle regressions', () => {
 				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
 			});
 
+			for (const throws of [false, true]) {
+				it(`retains indexed legacy data when a replacement index write ${throws ? 'throws' : 'fails'}`, () => {
+					const { persistence, storage, key, legacyKey, draft } = seedLegacy();
+					const updateIndex = spyOn(storage, 'setUserDraftIndex');
+					if (throws) {
+						updateIndex.and.throwError('Storage full');
+						expect(() => persistence.saveDraft('order_item', '42', { name: 'replacement' })).toThrowError();
+					} else {
+						updateIndex.and.stub();
+						persistence.saveDraft('order_item', '42', { name: 'replacement' });
+					}
+					expect(storage.getDraft(key)).toBeUndefined();
+					expect(storage.getDraft(legacyKey)).toEqual(draft);
+					expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+					updateIndex.and.callThrough();
+					persistence.deleteAllDrafts();
+					expect(persistence.hasDraft('order_item', '42')).toBeFalse();
+				});
+			}
+
+			if (!customStorage) {
+				it('retains legacy data without throwing when a replacement cannot be serialized', () => {
+					const { persistence, storage, legacyKey, draft } = seedLegacy();
+					const circular: { self?: unknown } = {};
+					circular.self = circular;
+					spyOn(console, 'error');
+					expect(() => persistence.saveDraft('order_item', '42', circular)).not.toThrow();
+					expect(storage.getDraft(legacyKey)).toEqual(draft);
+				});
+			}
+
 			it('prefers the current draft and removes legacy copies when saving or deleting', () => {
 				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
 				const current = { ...draft, formData: { name: 'current' } };

@@ -62,16 +62,14 @@ export class FormPersistenceService implements OnDestroy {
 		this.cancelPendingSave(key);
 		const now = Date.now();
 		const ttl = this.persistentConfig.ttl;
+		const legacyKey = this.legacyDraftKey(entityType, entityId);
+		const legacyDraft = legacyKey === key ? undefined : this.readDraft(legacyKey, entityType, entityId);
 
 		const data: StoredEntityData = {
 			metadata: {
 				userId: this.userId(),
 				sessionId,
-				createdAt:
-					(
-						this.readDraft(key, entityType, entityId) ??
-						this.readDraft(this.legacyDraftKey(entityType, entityId), entityType, entityId)
-					)?.metadata.createdAt ?? now,
+				createdAt: (this.readDraft(key, entityType, entityId) ?? legacyDraft)?.metadata.createdAt ?? now,
 				lastModified: now,
 				expiresAt: now + ttl,
 				version: 1,
@@ -84,9 +82,15 @@ export class FormPersistenceService implements OnDestroy {
 		};
 
 		this.storageService.setDraft(key, data);
-		this.updateUserIndex(this.userId(), key);
+		try {
+			this.updateUserIndex(this.userId(), key);
+		} finally {
+			if (legacyDraft && !this.storageService.getUserDraftIndex(this.userId())?.draftKeys.includes(key)) {
+				this.storageService.removeItem(key);
+			}
+		}
 		if (
-			JSON.stringify(this.readDraft(key, entityType, entityId)) === JSON.stringify(data) &&
+			this.isDraftStored(key, data) &&
 			this.storageService.getUserDraftIndex(this.userId())?.draftKeys.includes(key)
 		) {
 			this.removeLegacyDraft(entityType, entityId);
@@ -118,7 +122,7 @@ export class FormPersistenceService implements OnDestroy {
 			try {
 				this.storageService.setDraft(key, draft);
 				// Adapters may swallow write errors; confirm both the draft and index before removing legacy data.
-				if (JSON.stringify(this.readDraft(key, entityType, entityId)) === JSON.stringify(draft)) {
+				if (this.isDraftStored(key, draft)) {
 					try {
 						this.updateUserIndex(this.userId(), key);
 						if (!this.storageService.getUserDraftIndex(this.userId())?.draftKeys.includes(key)) {
@@ -181,6 +185,14 @@ export class FormPersistenceService implements OnDestroy {
 
 	private legacyDraftKey(entityType: string, entityId: string) {
 		return `${this.config.draftKeyPrefix}${this.userId()}_${entityType}_${entityId}`;
+	}
+
+	private isDraftStored(key: string, draft: StoredEntityData) {
+		try {
+			return JSON.stringify(this.storageService.getDraft(key)) === JSON.stringify(draft);
+		} catch {
+			return false;
+		}
 	}
 
 	private readDraft<T>(key: string, entityType: string, entityId: string) {
