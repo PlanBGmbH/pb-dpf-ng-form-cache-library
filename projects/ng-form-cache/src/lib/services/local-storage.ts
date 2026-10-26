@@ -89,7 +89,8 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @returns The generated storage key.
 	 */
 	public generateDraftKey(userId: string, entityType: string, entityId: string) {
-		return `${this.config.draftKeyPrefix}${userId}_${entityType}_${entityId}`;
+		// Legacy suffixes always contain two underscores; escape them to keep the namespaces disjoint.
+		return `${this.config.draftKeyPrefix}v2:${JSON.stringify([userId, entityType, entityId]).replace(/_/g, '\\u005f')}`;
 	}
 
 	/**

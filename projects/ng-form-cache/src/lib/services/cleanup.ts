@@ -68,7 +68,12 @@ export class CleanupService implements OnDestroy {
 				continue;
 			}
 			for (const draftKey of index.draftKeys) {
-				if (draftKey.startsWith(this.config.draftKeyPrefix)) this.storageService.removeItem(draftKey);
+				if (
+					draftKey.startsWith(this.config.draftKeyPrefix) &&
+					this.storageService.getDraft(draftKey)?.metadata?.userId === index.userId
+				) {
+					this.storageService.removeItem(draftKey);
+				}
 			}
 			this.storageService.removeItem(key);
 		}
