@@ -4,7 +4,7 @@ import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
-import { UserDraftIndex } from '../types/user-draft-index';
+import { isDraft, isUserDraftIndex, readDraft, readUserDraftIndex, validateUserDraftIndex } from './storage-validation';
 
 @Injectable()
 export class CleanupService implements OnDestroy {
@@ -41,15 +41,23 @@ export class CleanupService implements OnDestroy {
 		this.manageStorageQuota();
 	}
 
-	private keys(prefix: string) {
-		return (this.storageService.keys?.() ?? []).filter((key) => key.startsWith(prefix));
+	private keys(kind: 'draft' | 'index') {
+		const prefix = kind === 'draft' ? this.config.draftKeyPrefix : this.config.indexKeyPrefix;
+		const otherPrefix = kind === 'draft' ? this.config.indexKeyPrefix : this.config.draftKeyPrefix;
+		const isOtherRecord = kind === 'draft' ? isUserDraftIndex : isDraft;
+		return (this.storageService.keys?.() ?? []).filter(
+			(key) =>
+				key.startsWith(prefix) &&
+				(!key.startsWith(otherPrefix) ||
+					!isOtherRecord(this.storageService, key, this.storageService.getItem<unknown>(key))),
+		);
 	}
 
 	private cleanupExpiredDrafts() {
 		const now = Date.now();
-		for (const key of this.keys(this.config.draftKeyPrefix)) {
-			const draft = this.storageService.getDraft(key);
-			if (draft?.metadata && draft.metadata.expiresAt <= now) {
+		for (const key of this.keys('draft')) {
+			const draft = readDraft(this.storageService, key);
+			if (draft && draft.metadata.expiresAt <= now) {
 				this.storageService.removeItem(key);
 				this.removeDraftKeyFromIndex(draft.metadata.userId, key);
 			}
@@ -58,13 +66,9 @@ export class CleanupService implements OnDestroy {
 
 	private cleanupStaleSessions() {
 		const now = Date.now();
-		for (const key of this.keys(this.config.indexKeyPrefix)) {
-			const index = this.storageService.getItem<UserDraftIndex>(key);
-			if (
-				!index ||
-				!Array.isArray(index.draftKeys) ||
-				now - index.lastActivity <= this.persistentConfig.staleThreshold
-			) {
+		for (const key of this.keys('index')) {
+			const index = validateUserDraftIndex(this.storageService, key, this.storageService.getItem<unknown>(key));
+			if (!index || now - index.lastActivity <= this.persistentConfig.staleThreshold) {
 				continue;
 			}
 			for (const draftKey of index.draftKeys) {
@@ -77,15 +81,15 @@ export class CleanupService implements OnDestroy {
 	private manageStorageQuota() {
 		let totalSize = 0;
 		const drafts: { key: string; draft: StoredEntityData; size: number }[] = [];
-		for (const key of this.keys(this.config.draftKeyPrefix)) {
-			const draft = this.storageService.getDraft(key);
-			if (!draft?.metadata) continue;
+		for (const key of this.keys('draft')) {
+			const draft = readDraft(this.storageService, key);
+			if (!draft) continue;
 			const size = this.sizeOf(key, draft);
 			totalSize += size;
 			drafts.push({ key, draft, size });
 		}
-		for (const key of this.keys(this.config.indexKeyPrefix)) {
-			const index = this.storageService.getItem<UserDraftIndex>(key);
+		for (const key of this.keys('index')) {
+			const index = validateUserDraftIndex(this.storageService, key, this.storageService.getItem<unknown>(key));
 			if (index) totalSize += this.sizeOf(key, index);
 		}
 
@@ -94,10 +98,10 @@ export class CleanupService implements OnDestroy {
 			if (totalSize <= this.persistentConfig.storageQuota) break;
 			this.storageService.removeItem(key);
 			const indexKey = this.storageService.generateIndexKey(draft.metadata.userId);
-			const before = this.storageService.getUserDraftIndex(draft.metadata.userId);
+			const before = readUserDraftIndex(this.storageService, draft.metadata.userId);
 			const previousSize = before ? this.sizeOf(indexKey, before) : 0;
 			this.removeDraftKeyFromIndex(draft.metadata.userId, key);
-			const after = this.storageService.getUserDraftIndex(draft.metadata.userId);
+			const after = readUserDraftIndex(this.storageService, draft.metadata.userId);
 			totalSize -= size + previousSize - (after ? this.sizeOf(indexKey, after) : 0);
 		}
 	}
@@ -108,8 +112,8 @@ export class CleanupService implements OnDestroy {
 	}
 
 	private removeDraftKeyFromIndex(userId: string, draftKey: string) {
-		const index = this.storageService.getUserDraftIndex(userId);
-		if (!index || !Array.isArray(index.draftKeys)) return;
+		const index = readUserDraftIndex(this.storageService, userId);
+		if (!index) return;
 		index.draftKeys = index.draftKeys.filter((key) => key !== draftKey);
 		this.storageService.setUserDraftIndex(userId, index);
 	}

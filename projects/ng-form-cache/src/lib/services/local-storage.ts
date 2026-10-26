@@ -4,6 +4,7 @@ import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FormCacheStorage } from '../types/storage-service';
 import { UserDraftIndex } from '../types/user-draft-index';
+import { validateDraft, validateUserDraftIndex } from './storage-validation';
 
 @Injectable()
 export class LocalStorageService implements FormCacheStorage {
@@ -106,9 +107,9 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @param userId The user's ID.
 	 * @returns The user's draft index, or null if not found.
 	 */
-	public getUserDraftIndex(userId: string) {
+	public getUserDraftIndex(userId: string): UserDraftIndex | undefined {
 		const key = this.generateIndexKey(userId);
-		return this.getItem<UserDraftIndex>(key);
+		return validateUserDraftIndex(this, key, this.getItem<unknown>(key));
 	}
 
 	/**
@@ -126,8 +127,8 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @param key The key of the draft to retrieve.
 	 * @returns The stored entity data, or null if not found.
 	 */
-	public getDraft<T>(key: string) {
-		return this.getItem<StoredEntityData<T>>(key);
+	public getDraft<T>(key: string): StoredEntityData<T> | undefined {
+		return validateDraft<T>(this, key, this.getItem<unknown>(key));
 	}
 
 	/**

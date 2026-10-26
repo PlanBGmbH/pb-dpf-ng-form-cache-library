@@ -12,6 +12,8 @@ import {
 	provideFormCacheStorage,
 	SESSION_MANAGER_SERVICE,
 	SessionManagerService,
+	StoredEntityData,
+	UserDraftIndex,
 } from '@planbgmbh/ng-form-cache';
 
 @Injectable()
@@ -27,6 +29,12 @@ class MemoryStorage extends LocalStorageService {
 	public override removeItem(key: string): void {
 		this.items.delete(key);
 	}
+	public override getDraft<T>(key: string): StoredEntityData<T> | undefined {
+		return this.getItem(key);
+	}
+	public override getUserDraftIndex(userId: string): UserDraftIndex | undefined {
+		return this.getItem(this.generateIndexKey(userId));
+	}
 	public keys(): string[] {
 		return [...this.items.keys()];
 	}
@@ -34,13 +42,20 @@ class MemoryStorage extends LocalStorageService {
 
 describe('Draft lifecycle regressions', () => {
 	const form = (value: string) => new FormGroup({ name: new FormControl(value) });
-	const setup = (options: { customStorage?: boolean; server?: boolean; quota?: number } = {}) => {
+	const setup = (
+		options: {
+			customStorage?: boolean;
+			server?: boolean;
+			quota?: number;
+			prefixes?: Partial<typeof defaultConfig>;
+		} = {},
+	) => {
 		TestBed.configureTestingModule({
 			providers: [
 				provideZonelessChangeDetection(),
 				provideFormCacheStorage(
 					{
-						baseConfig: { ...defaultConfig, autoSaveDebounceTime: 100 },
+						baseConfig: { ...defaultConfig, autoSaveDebounceTime: 100, ...options.prefixes },
 						perstistenceConfig: {
 							ttl: 1000,
 							cleanupInterval: 500,
@@ -235,4 +250,192 @@ describe('Draft lifecycle regressions', () => {
 		expect(run).not.toHaveBeenCalled();
 		expect(localStorage.length).toBe(0);
 	});
+
+	for (const customStorage of [false, true]) {
+		describe(customStorage ? 'unvalidated custom adapter records' : 'localStorage records', () => {
+			const invalidDrafts = (draft: StoredEntityData): unknown[] => [
+				{},
+				[],
+				null,
+				true,
+				42,
+				'old draft',
+				{ ...draft, metadata: null },
+				{ ...draft, metadata: {} },
+				{ ...draft, metadata: { ...draft.metadata, version: 2 } },
+				{ ...draft, metadata: { ...draft.metadata, userId: 'bob' } },
+				{ ...draft, metadata: { ...draft.metadata, sessionId: 42 } },
+				{ ...draft, entityType: 'other' },
+				{ ...draft, entityId: 'other' },
+				{ ...draft, isDirty: 'true' },
+				{ ...draft, autoSaveEnabled: null },
+				...['createdAt', 'lastModified', 'expiresAt'].flatMap((field) =>
+					[null, '123', {}, Infinity].map((value) => ({
+						...draft,
+						metadata: { ...draft.metadata, [field]: value },
+					})),
+				),
+			];
+			const invalidIndexes = (index: UserDraftIndex): unknown[] => [
+				{},
+				[],
+				null,
+				false,
+				42,
+				'old index',
+				{ ...index, draftKeys: undefined },
+				...['key', {}, null, [42], ['unrelated', null]].map((draftKeys) => ({
+					...index,
+					draftKeys,
+				})),
+				{ ...index, userId: 'bob' },
+				{ ...index, sessionId: 42 },
+				...['123', null, {}, Infinity].map((lastActivity) => ({ ...index, lastActivity })),
+			];
+
+			it('treats invalid drafts as absent and replaces them safely on save', () => {
+				const { persistence, storage } = setup({ customStorage });
+				persistence.saveDraft('profile', '1', {});
+				const key = storage.generateDraftKey('alice', 'profile', '1');
+				const valid = storage.getDraft(key)!;
+				jasmine.clock().tick(10);
+				for (const invalid of invalidDrafts(valid)) {
+					storage.setItem(key, invalid);
+					expect(persistence.loadDraft('profile', '1')).toBeUndefined();
+					expect(storage.getItem(key)).toBeUndefined();
+					storage.setItem(key, invalid);
+					expect(persistence.hasDraft('profile', '1')).toBeFalse();
+					storage.setItem(key, invalid);
+					persistence.saveDraft('profile', '1', 'recovered');
+					expect(persistence.loadDraft('profile', '1')?.metadata.createdAt).toBe(Date.now());
+					expect(persistence.loadDraft('profile', '1')?.formData).toBe('recovered');
+				}
+			});
+
+			it('rebuilds invalid indexes on session startup and safely handles deletion', () => {
+				const { persistence, storage, session } = setup({ customStorage });
+				const indexKey = storage.generateIndexKey('alice');
+				const valid = storage.getUserDraftIndex('alice')!;
+				storage.setItem('unrelated', 'keep');
+				for (const invalid of invalidIndexes(valid)) {
+					storage.setItem(indexKey, invalid);
+					expect(session.isSessionValid('alice')).toBeFalse();
+					expect(storage.getItem(indexKey)).toBeUndefined();
+					storage.setItem(indexKey, invalid);
+					expect(() => persistence.saveDraft('profile', '1', {})).not.toThrow();
+					storage.setItem(indexKey, invalid);
+					expect(() => persistence.deleteDraft('profile', '1')).not.toThrow();
+					storage.setItem(indexKey, invalid);
+					expect(() => persistence.deleteAllDrafts()).not.toThrow();
+					storage.setItem(indexKey, invalid);
+					expect(() => session.endSession('alice')).not.toThrow();
+					storage.setItem(indexKey, invalid);
+					session.startSession('alice');
+					expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+					persistence.saveDraft('profile', '1', {});
+					expect(persistence.hasDraft('profile', '1')).toBeTrue();
+					expect(storage.getItem('unrelated')).toBe('keep');
+				}
+			});
+
+			it('removes invalid records during cleanup without affecting valid drafts or unrelated data', () => {
+				const { persistence, storage, cleanup } = setup({ customStorage });
+				persistence.saveDraft('profile', '1', {});
+				const key = storage.generateDraftKey('alice', 'profile', '1');
+				const validDraft = storage.getDraft(key)!;
+				const indexKey = storage.generateIndexKey('alice');
+				const validIndex = storage.getUserDraftIndex('alice')!;
+				storage.setItem('unrelated', 'keep');
+				for (const invalid of invalidDrafts(validDraft)) {
+					storage.setItem(key, invalid);
+					cleanup.runCleanup();
+					expect(storage.getItem(key)).toBeUndefined();
+				}
+				storage.setDraft(key, validDraft);
+				for (const invalid of invalidIndexes(validIndex)) {
+					storage.setItem(indexKey, invalid);
+					cleanup.runCleanup();
+					expect(storage.getItem(indexKey)).toBeUndefined();
+					expect(persistence.hasDraft('profile', '1')).toBeTrue();
+				}
+				expect(storage.getItem('unrelated')).toBe('keep');
+			});
+
+			it('preserves arbitrary formData and valid creation timestamps', () => {
+				const { persistence, storage } = setup({ customStorage });
+				for (const formData of [null, false, 42, 'text', [1, null], { nested: { value: true } }, undefined]) {
+					persistence.saveDraft('profile', '1', formData);
+					const createdAt = persistence.loadDraft('profile', '1')?.metadata.createdAt;
+					jasmine.clock().tick(1);
+					persistence.saveDraft('profile', '1', formData);
+					expect(persistence.loadDraft('profile', '1')?.formData).toEqual(formData);
+					expect(persistence.loadDraft('profile', '1')?.metadata.createdAt).toBe(createdAt);
+				}
+				persistence.saveDraft('profile', '', {});
+				const key = storage.generateDraftKey('alice', 'profile', '');
+				const draft = storage.getDraft(key)!;
+				delete draft.entityId;
+				storage.setDraft(key, draft);
+				expect(persistence.hasDraft('profile', '')).toBeTrue();
+			});
+		});
+	}
+
+	it('rejects non-finite timestamps returned directly by custom adapters', () => {
+		const { persistence, storage, cleanup, session } = setup({ customStorage: true });
+		persistence.saveDraft('profile', '1', {});
+		const key = storage.generateDraftKey('alice', 'profile', '1');
+		const draft = storage.getDraft(key)!;
+		const index = storage.getUserDraftIndex('alice')!;
+		const getDraft = spyOn(storage, 'getDraft');
+		for (const field of ['createdAt', 'lastModified', 'expiresAt']) {
+			for (const value of [NaN, Infinity, -Infinity]) {
+				getDraft.and.returnValue({ ...draft, metadata: { ...draft.metadata, [field]: value } });
+				expect(persistence.loadDraft('profile', '1')).toBeUndefined();
+				expect(() => cleanup.runCleanup()).not.toThrow();
+			}
+		}
+		const getIndex = spyOn(storage, 'getUserDraftIndex');
+		for (const lastActivity of [NaN, Infinity, -Infinity]) {
+			getIndex.and.returnValue({ ...index, lastActivity });
+			expect(session.isSessionValid('alice')).toBeFalse();
+			expect(() => persistence.deleteAllDrafts()).not.toThrow();
+		}
+	});
+
+	it('rejects sparse draft key arrays returned directly by custom adapters', () => {
+		const { persistence, storage, cleanup, session } = setup({ customStorage: true });
+		const key = storage.generateIndexKey('alice');
+		const index = { ...storage.getUserDraftIndex('alice')!, draftKeys: new Array<string>(1) };
+		spyOn(storage, 'getUserDraftIndex').and.returnValue(index);
+		expect(session.isSessionValid('alice')).toBeFalse();
+		expect(() => persistence.deleteAllDrafts()).not.toThrow();
+		const getItem = storage.getItem.bind(storage);
+		storage.setItem(key, {});
+		spyOn(storage, 'getItem').and.callFake(<T>(itemKey: string): T | undefined => {
+			return itemKey === key ? (index as T) : getItem<T>(itemKey);
+		});
+		expect(() => cleanup.runCleanup()).not.toThrow();
+		expect(storage.keys?.()).not.toContain(key);
+	});
+
+	for (const [draftKeyPrefix, indexKeyPrefix] of [
+		['fc_', 'fc_index_'],
+		['fc_draft_', 'fc_'],
+		['fc_', 'fc_'],
+	]) {
+		it(`preserves valid records with overlapping prefixes ${draftKeyPrefix} / ${indexKeyPrefix}`, () => {
+			const { persistence, storage, cleanup, session } = setup({
+				prefixes: { draftKeyPrefix, indexKeyPrefix },
+			});
+			persistence.saveDraft('profile', '1', 'keep');
+			cleanup.runCleanup();
+			expect(session.isSessionValid('alice')).toBeTrue();
+			expect(persistence.loadDraft('profile', '1')?.formData).toBe('keep');
+			jasmine.clock().tick(1001);
+			cleanup.runCleanup();
+			expect(persistence.hasDraft('profile', '1')).toBeFalse();
+			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+		});
+	}
 });

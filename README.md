@@ -85,3 +85,8 @@ flowchart TD
 ```
 
 The `Form_Initialization` part is handled automatically via the `fcAutoSave` directive. For deletion of a draft after form submit/save the user manually needs to call the delete function on the draft service. Call `CleanupService.start()` once during browser application startup to enable periodic cleanup. Start or resume a matching session with `SessionManagerService` before saving drafts; see the [quickstart](docs/ng-form-cache/docs/getting-started/quickstart.md).
+
+Draft envelopes (currently version `1`) and user indexes are validated when read, including results
+from custom storage adapters. Invalid records are removed and treated as absent; their contents are
+not migrated. Starting a session recreates a missing or invalid user index. Form data itself is not
+restricted by this validation.

@@ -2,6 +2,7 @@ import { isPlatformBrowser } from '@angular/common';
 import { inject, Injectable, OnDestroy, PLATFORM_ID } from '@angular/core';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
+import { readUserDraftIndex } from './storage-validation';
 
 @Injectable()
 export class SessionManagerService implements OnDestroy {
@@ -37,7 +38,7 @@ export class SessionManagerService implements OnDestroy {
 	 * @param userId The ID of the user ending the session.
 	 */
 	public endSession(userId: string) {
-		const index = this.storageService.getUserDraftIndex(userId);
+		const index = readUserDraftIndex(this.storageService, userId);
 		if (index && index.sessionId === this.currentSessionId) {
 			index.sessionId = '';
 			this.storageService.setUserDraftIndex(userId, index);
@@ -53,7 +54,8 @@ export class SessionManagerService implements OnDestroy {
 	 */
 	public getSessionId() {
 		if (!this.currentSessionId) {
-			this.currentSessionId = this.storageService.getItem<string>(this.config.sessionIdKey);
+			const value = this.storageService.getItem<unknown>(this.config.sessionIdKey);
+			this.currentSessionId = typeof value === 'string' ? value : undefined;
 		}
 		return this.currentSessionId;
 	}
@@ -64,7 +66,7 @@ export class SessionManagerService implements OnDestroy {
 	 * @returns True if the session is valid, false otherwise.
 	 */
 	public isSessionValid(userId: string) {
-		const index = this.storageService.getUserDraftIndex(userId);
+		const index = readUserDraftIndex(this.storageService, userId);
 		const sessionId = this.getSessionId();
 		return !!(index && sessionId && index.sessionId === sessionId);
 	}
@@ -74,7 +76,7 @@ export class SessionManagerService implements OnDestroy {
 	}
 
 	private updateUserIndex(userId: string, sessionId: string) {
-		let index = this.storageService.getUserDraftIndex(userId);
+		let index = readUserDraftIndex(this.storageService, userId);
 		if (!index) {
 			index = {
 				userId,

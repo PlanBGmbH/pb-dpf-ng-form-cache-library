@@ -5,6 +5,7 @@ import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
 import { SESSION_MANAGER_SERVICE } from '../types/service-tokens';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
+import { readDraft, readUserDraftIndex } from './storage-validation';
 
 @Injectable()
 export class FormPersistenceService implements OnDestroy {
@@ -67,7 +68,7 @@ export class FormPersistenceService implements OnDestroy {
 			metadata: {
 				userId: this.userId(),
 				sessionId,
-				createdAt: this.storageService.getDraft(key)?.metadata.createdAt ?? now,
+				createdAt: readDraft(this.storageService, key)?.metadata.createdAt ?? now,
 				lastModified: now,
 				expiresAt: now + ttl,
 				version: 1,
@@ -91,7 +92,7 @@ export class FormPersistenceService implements OnDestroy {
 	 */
 	public loadDraft<T>(entityType: string, entityId: string) {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
-		const draft = this.storageService.getDraft<T>(key);
+		const draft = readDraft<T>(this.storageService, key);
 		if (draft && draft.metadata.expiresAt <= Date.now()) {
 			this.storageService.removeItem(key);
 			this.removeDraftFromIndex(this.userId(), key);
@@ -128,7 +129,7 @@ export class FormPersistenceService implements OnDestroy {
 	public deleteAllDrafts() {
 		this.cancelPendingSaves();
 		const userId = this.userId();
-		const index = this.storageService.getUserDraftIndex(userId);
+		const index = readUserDraftIndex(this.storageService, userId);
 		if (!index) return;
 		index.draftKeys.forEach((key) => {
 			this.storageService.removeItem(key);
@@ -139,7 +140,7 @@ export class FormPersistenceService implements OnDestroy {
 	}
 
 	private updateUserIndex(userId: string, draftKey: string) {
-		const index = this.storageService.getUserDraftIndex(userId);
+		const index = readUserDraftIndex(this.storageService, userId);
 		if (!index) return;
 		if (!index.draftKeys.includes(draftKey)) index.draftKeys.push(draftKey);
 		index.lastActivity = Date.now();
@@ -147,7 +148,7 @@ export class FormPersistenceService implements OnDestroy {
 	}
 
 	private removeDraftFromIndex(userId: string, draftKey: string) {
-		const index = this.storageService.getUserDraftIndex(userId);
+		const index = readUserDraftIndex(this.storageService, userId);
 		if (!index) return;
 		index.draftKeys = index.draftKeys.filter((k) => k !== draftKey);
 		index.lastActivity = Date.now();
