@@ -135,13 +135,20 @@ export class FormPersistenceService implements OnDestroy {
 					draftPersisted: false,
 				});
 			}
-			if (!indexResult.success)
+			if (!indexResult.success) {
+				// Without key enumeration an unindexed new draft could never be found by deleteAllDrafts or cleanup.
+				const orphaned =
+					!currentDraft &&
+					!this.storageService.keys &&
+					!validIndex(this.storageService.getUserDraftIndex(this.userId()), this.userId())?.draftKeys.includes(key);
+				if (orphaned) this.storageService.removeItem(key);
 				return this.recordState(key, {
 					status: 'failed',
 					phase,
 					...indexResult,
-					draftPersisted: true,
+					draftPersisted: !orphaned,
 				});
+			}
 			if (this.isDraftStored(key, data) && indexed) this.removeLegacyDraft(entityType, entityId);
 			return this.recordState(key, { status: 'saved' });
 		} catch (error) {
@@ -227,14 +234,14 @@ export class FormPersistenceService implements OnDestroy {
 	}
 
 	/**
-	 * Deletes all drafts for the current user.
+	 * Deletes all drafts for the current user, including unindexed drafts when the adapter supports `keys()`.
+	 * @returns The result of clearing the user's draft index.
 	 */
-	public deleteAllDrafts() {
+	public deleteAllDrafts(): StorageWriteResult {
 		this.cancelPendingSaves();
 		const userId = this.userId();
 		const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
-		if (!index) return;
-		index.draftKeys.forEach((key) => {
+		index?.draftKeys.forEach((key) => {
 			if (
 				key.startsWith(this.config.draftKeyPrefix) &&
 				validDraft(this.storageService.getDraft(key))?.metadata.userId === userId
@@ -242,9 +249,22 @@ export class FormPersistenceService implements OnDestroy {
 				this.removeStoredDraft(key);
 			}
 		});
+		// Drafts whose index update failed are only reachable through enumeration.
+		for (const key of this.storageService.keys?.() ?? []) {
+			if (!key.startsWith(this.config.draftKeyPrefix)) continue;
+			const draft = validDraft(this.storageService.getDraft(key));
+			if (
+				draft?.metadata.userId === userId &&
+				(key === this.storageService.generateDraftKey(userId, draft.entityType, draft.entityId ?? '') ||
+					key === this.legacyDraftKey(draft.entityType, draft.entityId ?? ''))
+			) {
+				this.removeStoredDraft(key);
+			}
+		}
+		if (!index) return { success: true };
 		index.draftKeys = [];
 		index.lastActivity = Date.now();
-		this.storageService.setUserDraftIndex(userId, index);
+		return attemptWrite(() => this.storageService.setUserDraftIndex(userId, index));
 	}
 
 	private legacyDraftKey(entityType: string, entityId: string) {
