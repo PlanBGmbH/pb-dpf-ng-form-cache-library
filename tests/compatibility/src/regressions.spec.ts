@@ -1,4 +1,10 @@
-import { Injectable, PLATFORM_ID, provideZonelessChangeDetection } from '@angular/core';
+import {
+	createEnvironmentInjector,
+	EnvironmentInjector,
+	Injectable,
+	PLATFORM_ID,
+	provideZonelessChangeDetection,
+} from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { FormControl, FormGroup } from '@angular/forms';
 import {
@@ -583,6 +589,112 @@ describe('Draft lifecycle regressions', () => {
 		for (let i = 0; i < 4; i++) persistence.saveDraft('profile', String(i), {});
 		cleanup.runCleanup();
 		expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+	});
+
+	describe('concurrent per-user index updates with an enumerating adapter that trusts its index', () => {
+		/** A second application instance sharing the adapter and session, like another tab. */
+		const peer = () => {
+			const injector = createEnvironmentInjector(
+				[{ provide: FORM_PERSISTENCE_SERVICE, useClass: FormPersistenceService }],
+				TestBed.inject(EnvironmentInjector),
+			);
+			const persistence = injector.get(FORM_PERSISTENCE_SERVICE);
+			persistence.setUserId('alice');
+			return { injector, persistence };
+		};
+		/** Runs `interleave` once, right after the next index read returned its (now stale) snapshot. */
+		const afterNextIndexRead = (storage: ReturnType<typeof setup>['storage'], interleave: () => void) => {
+			const read = storage.getUserDraftIndex.bind(storage);
+			let armed = true;
+			spyOn(storage, 'getUserDraftIndex').and.callFake((userId: string) => {
+				const snapshot = read(userId);
+				if (armed) {
+					armed = false;
+					interleave();
+				}
+				return snapshot;
+			});
+		};
+		const keyOf = (storage: ReturnType<typeof setup>['storage'], id: string) =>
+			storage.generateDraftKey('alice', 'profile', id);
+
+		it('keeps both drafts indexed when two saves read the same empty index', () => {
+			const { persistence, storage } = setup({ customStorage: true });
+			const other = peer();
+			afterNextIndexRead(storage, () => {
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+				expect(other.persistence.saveDraft('profile', 'b', {})).toEqual({ status: 'saved' });
+			});
+			expect(persistence.saveDraft('profile', 'a', {})).toEqual({ status: 'saved' });
+			expect(storage.getUserDraftIndex('alice')?.draftKeys.sort()).toEqual(
+				[keyOf(storage, 'a'), keyOf(storage, 'b')].sort(),
+			);
+			persistence.deleteAllDrafts();
+			expect(storage.getDraft(keyOf(storage, 'a'))).toBeUndefined();
+			expect(storage.getDraft(keyOf(storage, 'b'))).toBeUndefined();
+			other.injector.destroy();
+		});
+
+		it('deletes drafts missing from an overwritten index during bulk deletion', () => {
+			const { persistence, storage } = setup({ customStorage: true });
+			const stale = storage.getUserDraftIndex('alice')!;
+			persistence.saveDraft('profile', 'a', {});
+			persistence.saveDraft('profile', 'b', {});
+			storage.setUserDraftIndex('alice', { ...stale, draftKeys: [keyOf(storage, 'b')] });
+			persistence.deleteAllDrafts();
+			expect((storage as MemoryStorage).keys().filter((key) => key.startsWith(defaultConfig.draftKeyPrefix))).toEqual(
+				[],
+			);
+			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+		});
+
+		it('keeps a draft saved during bulk deletion indexed', () => {
+			const { persistence, storage } = setup({ customStorage: true });
+			const other = peer();
+			persistence.saveDraft('profile', 'a', {});
+			persistence.saveDraft('profile', 'c', {});
+			const memory = storage as MemoryStorage;
+			const remove = memory.removeDraft.bind(memory);
+			let armed = true;
+			spyOn(memory, 'removeDraft').and.callFake((key: string) => {
+				remove(key);
+				if (armed) {
+					armed = false;
+					other.persistence.saveDraft('profile', 'b', {});
+				}
+			});
+			persistence.deleteAllDrafts();
+			expect(storage.getDraft(keyOf(storage, 'a'))).toBeUndefined();
+			expect(storage.getDraft(keyOf(storage, 'c'))).toBeUndefined();
+			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([keyOf(storage, 'b')]);
+			persistence.deleteAllDrafts();
+			expect(storage.getDraft(keyOf(storage, 'b'))).toBeUndefined();
+			other.injector.destroy();
+		});
+
+		it('keeps a draft saved during stale-session cleanup and its index entry', () => {
+			const { persistence, storage, cleanup } = setup({ customStorage: true, ttl: 10000 });
+			const other = peer();
+			persistence.saveDraft('profile', 'a', {});
+			jasmine.clock().tick(5001);
+			afterNextIndexRead(storage, () => other.persistence.saveDraft('profile', 'b', { kept: true }));
+			cleanup.runCleanup();
+			expect(storage.getDraft(keyOf(storage, 'a'))).toBeUndefined();
+			expect(persistence.loadDraft('profile', 'b')?.formData).toEqual({ kept: true });
+			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([keyOf(storage, 'b')]);
+			persistence.deleteAllDrafts();
+			expect(storage.getDraft(keyOf(storage, 'b'))).toBeUndefined();
+			other.injector.destroy();
+		});
+
+		it('keeps drafts saved by another tab indexed when a session resumes', () => {
+			const { session, storage } = setup({ customStorage: true });
+			const other = peer();
+			afterNextIndexRead(storage, () => other.persistence.saveDraft('profile', 'b', {}));
+			session.startSession('alice');
+			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([keyOf(storage, 'b')]);
+			other.injector.destroy();
+		});
 	});
 
 	it('decodes JSON session IDs received from another tab', () => {

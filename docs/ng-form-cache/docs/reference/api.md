@@ -65,7 +65,7 @@ Handles serialization, persistence, and index management.
 | `saveDraft(entityType: string, entityId: string, formData: unknown)` | Immediately persist a custom payload and return `DraftSaveState`. |
 | `loadDraft<T>(entityType: string, entityId: string): StoredEntityData<T> \| undefined` | Return an unexpired draft; expired drafts and their index entries are removed. |
 | `deleteDraft(entityType: string, entityId: string)` | Cancel pending saves, remove a single draft, and update the user index. |
-| `deleteAllDrafts()` | Clears every draft for the current user and resets the index. |
+| `deleteAllDrafts()` | Clears every draft for the current user, including drafts missing from the index on adapters implementing `keys()`, and rebuilds the index from remaining drafts. |
 | `hasDraft(entityType: string, entityId: string)` | Boolean convenience wrapper around `loadDraft`. |
 
 ### `SessionManagerService`
@@ -143,4 +143,6 @@ There is one application-wide session for the configured `sessionIdKey`. A schem
 
 `endSession(userId)` revokes the caller's observed matching session for all tabs and retains its drafts. It returns a write result so an application can report a failed logout. Per-session markers under `sessionIdKey + ":revoked:"` avoid removing or overwriting a newer login during a race. These small markers are retained to prevent stale session records from becoming valid again and are outside the draft/index quota budget. Session reads check persisted state without waiting for storage events. Pending saves are cancelled when they observe logout or session replacement; a synchronous write already in progress can still finish. Draft deletion and cleanup are independent of authentication logout; this cache session is not an authentication boundary.
 
-These conflict guarantees apply to the built-in adapter and subclasses retaining its reconciliation methods and implementing `keys()`. A custom shared adapter must implement equivalent discovery or transactional index updates. Session-storage adapters share storage within a browser tab, rather than across tabs.
+The user index is a single shared record, and its synchronous read/modify/write updates are not transactional across tabs. For every adapter implementing `keys()`, the services therefore rebuild membership from validated draft records instead of trusting the index alone: each index write performed by saves, deletions, session start/end, and cleanup also adds every stored draft owned by that user, `deleteAllDrafts()` deletes all owned drafts it can enumerate (not only indexed ones) and rewrites the index from the drafts still present, and stale-session cleanup removes owned drafts that are themselves stale while retaining, and keeping indexed, drafts saved concurrently by an active tab. A draft saved in another tab while a bulk deletion runs is either deleted or remains stored and is found again by later reconciliation.
+
+These conflict guarantees apply to adapters implementing `keys()`, including the built-in adapter. A custom shared adapter without enumeration must implement equivalent discovery or transactional index updates. Session-storage adapters share storage within a browser tab, rather than across tabs.

@@ -3,6 +3,7 @@ import { inject, Injectable, OnDestroy, PLATFORM_ID } from '@angular/core';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { readSession, SessionRecord } from '../helpers/storage-records';
 import { attemptWrite } from '../helpers/storage-write';
+import { withOwnedDrafts } from '../helpers/user-drafts';
 import { StorageWriteResult } from '../types/storage-write-result';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
 import { validIndex } from './storage-validation';
@@ -54,6 +55,7 @@ export class SessionManagerService implements OnDestroy {
 				const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
 				if (index?.sessionId === sessionId) {
 					index.sessionId = '';
+					index.draftKeys = this.withOwnedDrafts(userId, index.draftKeys);
 					attemptWrite(() => this.storageService.setUserDraftIndex(userId, index));
 				}
 			}
@@ -111,8 +113,14 @@ export class SessionManagerService implements OnDestroy {
 			lastActivity: Date.now(),
 		};
 		index.sessionId = sessionId;
+		index.draftKeys = this.withOwnedDrafts(userId, index.draftKeys);
 		index.lastActivity = Date.now();
 		attemptWrite(() => this.storageService.setUserDraftIndex(userId, index));
+	}
+
+	/** Keep drafts saved by other tabs indexed when replacing the shared index record. */
+	private withOwnedDrafts(userId: string, draftKeys: string[]) {
+		return withOwnedDrafts(this.storageService, this.config.draftKeyPrefix, userId, draftKeys);
 	}
 
 	private handleStorageChange(event: StorageEvent) {
