@@ -40,11 +40,46 @@ class MemoryStorage extends LocalStorageService {
 	}
 }
 
+/** In-memory adapter without external change notifications. */
+@Injectable()
+class PlainStorage extends MemoryStorage {
+	public constructor() {
+		super();
+		(this as { watch?: unknown }).watch = undefined;
+	}
+}
+
+/** Session-scoped adapter: notifications are limited to sessionStorage events from same-tab documents. */
+@Injectable()
+class SessionStorageAdapter extends MemoryStorage {
+	public override getItem<T>(key: string): T | undefined {
+		const value = sessionStorage.getItem(key);
+		return value === null ? undefined : JSON.parse(value);
+	}
+	public override setItem<T>(key: string, value: T): void {
+		sessionStorage.setItem(key, JSON.stringify(value));
+	}
+	public override removeItem(key: string): void {
+		sessionStorage.removeItem(key);
+	}
+	public override keys(): string[] {
+		return Object.keys(sessionStorage);
+	}
+	public override watch(listener: (key: string | null) => void): () => void {
+		const handler = (event: StorageEvent) => {
+			if (event.storageArea === sessionStorage) listener(event.key);
+		};
+		window.addEventListener('storage', handler);
+		return () => window.removeEventListener('storage', handler);
+	}
+}
+
 describe('Draft lifecycle regressions', () => {
 	const form = (value: string) => new FormGroup({ name: new FormControl(value) });
 	const setup = (
 		options: {
 			customStorage?: boolean;
+			storageClass?: typeof MemoryStorage;
 			server?: boolean;
 			quota?: number;
 			ttl?: number;
@@ -64,7 +99,7 @@ describe('Draft lifecycle regressions', () => {
 							storageQuota: options.quota ?? 100000,
 						},
 					},
-					options.customStorage ? MemoryStorage : undefined,
+					options.storageClass ?? (options.customStorage ? MemoryStorage : undefined),
 				),
 				...(options.server ? [{ provide: PLATFORM_ID, useValue: 'server' }] : []),
 			],
@@ -600,6 +635,54 @@ describe('Draft lifecycle regressions', () => {
 		localStorage.clear();
 		window.dispatchEvent(new StorageEvent('storage', { key: null }));
 		expect(session.getSessionId()).toBeUndefined();
+	});
+
+	it('keeps a custom backend session when localStorage changes the same key', () => {
+		const { session } = setup({ customStorage: true });
+		const id = session.getSessionId();
+		const other = JSON.stringify({ version: 1, userId: 'bob', sessionId: 'other-tab' });
+		localStorage.setItem(defaultConfig.sessionIdKey, other);
+		window.dispatchEvent(
+			new StorageEvent('storage', { key: defaultConfig.sessionIdKey, newValue: other, storageArea: localStorage }),
+		);
+		expect(session.getSessionId()).toBe(id);
+		expect(session.isSessionValid('alice')).toBeTrue();
+	});
+
+	it('does not listen to browser storage events for backends without change notifications', () => {
+		const listener = spyOn(window, 'addEventListener').and.callThrough();
+		const { session } = setup({ storageClass: PlainStorage });
+		expect(listener.calls.allArgs().some(([event]) => event === 'storage')).toBeFalse();
+		expect(session.isSessionValid('alice')).toBeTrue();
+	});
+
+	it('refreshes a sessionStorage adapter only for relevant sessionStorage events and stops after teardown', () => {
+		sessionStorage.clear();
+		try {
+			const { session, storage } = setup({ storageClass: SessionStorageAdapter });
+			const read = spyOn(storage, 'getItem').and.callThrough();
+			const notify = (key: string | null, storageArea: Storage) =>
+				window.dispatchEvent(new StorageEvent('storage', { key, storageArea }));
+			notify(defaultConfig.sessionIdKey, localStorage);
+			notify('unrelated', sessionStorage);
+			expect(read).not.toHaveBeenCalled();
+			notify(defaultConfig.sessionIdKey, sessionStorage);
+			expect(read).toHaveBeenCalled();
+			expect(session.isSessionValid('alice')).toBeTrue();
+			TestBed.resetTestingModule();
+			read.calls.reset();
+			notify(defaultConfig.sessionIdKey, sessionStorage);
+			expect(read).not.toHaveBeenCalled();
+		} finally {
+			sessionStorage.clear();
+		}
+	});
+
+	it('removes the default localStorage listener on teardown', () => {
+		setup();
+		const remove = spyOn(window, 'removeEventListener').and.callThrough();
+		TestBed.resetTestingModule();
+		expect(remove.calls.allArgs().some(([event]) => event === 'storage')).toBeTrue();
 	});
 
 	it('does not remove a newer session when an older tab ends its session', () => {
