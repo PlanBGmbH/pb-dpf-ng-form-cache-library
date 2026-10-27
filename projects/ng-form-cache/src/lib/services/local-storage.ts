@@ -141,7 +141,7 @@ export class LocalStorageService implements FormCacheStorage {
 	 * @param userId The user's ID.
 	 * @returns The user's draft index, or null if not found.
 	 */
-	public getUserDraftIndex(userId: string) {
+	public getUserDraftIndex(userId: string): UserDraftIndex | undefined {
 		const raw = this.getItem<unknown>(this.generateIndexKey(userId));
 		const index = readIndex(raw, userId);
 		// Preserve unsupported records rather than interpreting a future index format.
@@ -158,7 +158,10 @@ export class LocalStorageService implements FormCacheStorage {
 			const stored = readDraft(this.getItem(canonical));
 			const hasCanonical =
 				stored && this.generateDraftKey(stored.metadata.userId, stored.entityType, stored.entityId ?? '') === canonical;
-			drafts.set(canonical, { key: hasCanonical ? canonical : key, draft: hasCanonical ? stored : draft });
+			drafts.set(canonical, {
+				key: hasCanonical ? canonical : key,
+				draft: hasCanonical ? stored : draft,
+			});
 		}
 		if (!index && !drafts.size) return;
 		let lastActivity = index?.lastActivity ?? 0;

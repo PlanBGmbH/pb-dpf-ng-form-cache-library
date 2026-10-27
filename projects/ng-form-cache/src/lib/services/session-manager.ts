@@ -5,6 +5,7 @@ import { readSession, SessionRecord } from '../helpers/storage-records';
 import { attemptWrite } from '../helpers/storage-write';
 import { StorageWriteResult } from '../types/storage-write-result';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
+import { validIndex } from './storage-validation';
 
 @Injectable()
 export class SessionManagerService implements OnDestroy {
@@ -50,7 +51,7 @@ export class SessionManagerService implements OnDestroy {
 			// An immutable per-session revocation avoids a read/remove race with a new login.
 			result = attemptWrite(() => this.storageService.setItem(this.revocationKey(sessionId), true));
 			if (result.success) {
-				const index = this.storageService.getUserDraftIndex(userId);
+				const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
 				if (index?.sessionId === sessionId) {
 					index.sessionId = '';
 					attemptWrite(() => this.storageService.setUserDraftIndex(userId, index));
@@ -77,7 +78,7 @@ export class SessionManagerService implements OnDestroy {
 
 	private belongsTo(active: SessionRecord | string, userId: string): boolean {
 		return typeof active === 'string'
-			? this.storageService.getUserDraftIndex(userId)?.sessionId === active
+			? validIndex(this.storageService.getUserDraftIndex(userId), userId)?.sessionId === active
 			: active.userId === userId;
 	}
 
@@ -97,7 +98,12 @@ export class SessionManagerService implements OnDestroy {
 	}
 
 	private updateUserIndex(userId: string, sessionId: string) {
-		const index = this.storageService.getUserDraftIndex(userId) ?? {
+		const stored = this.storageService.getItem<{ version?: unknown } | null>(
+			this.storageService.generateIndexKey(userId),
+		);
+		// Preserve indexes written by a newer library version.
+		if (stored && typeof stored === 'object' && stored.version !== undefined && stored.version !== 1) return;
+		const index = validIndex(this.storageService.getUserDraftIndex(userId), userId) ?? {
 			version: 1,
 			userId,
 			sessionId,

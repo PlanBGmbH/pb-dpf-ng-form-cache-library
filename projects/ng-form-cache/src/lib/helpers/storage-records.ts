@@ -39,7 +39,7 @@ export function readIndex(value: unknown, userId: string): UserDraftIndex | unde
 		typeof value['sessionId'] !== 'string' ||
 		!isTimestamp(value['lastActivity']) ||
 		!Array.isArray(value['draftKeys']) ||
-		!value['draftKeys'].every((key: unknown) => typeof key === 'string')
+		!Array.from(value['draftKeys'] as unknown[]).every((key: unknown) => typeof key === 'string')
 	)
 		return;
 	return { ...value, version: 1, draftKeys: [...new Set(value['draftKeys'])] } as UserDraftIndex;

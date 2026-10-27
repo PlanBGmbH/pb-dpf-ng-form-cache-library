@@ -7,6 +7,7 @@ import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
 import { SESSION_MANAGER_SERVICE } from '../types/service-tokens';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
+import { validDraft, validIndex } from './storage-validation';
 
 @Injectable()
 export class FormPersistenceService implements OnDestroy {
@@ -84,7 +85,12 @@ export class FormPersistenceService implements OnDestroy {
 		try {
 			const sessionId = this.sessionManagerService.getSessionId();
 			if (!this.userId() || !sessionId || !this.sessionManagerService.isSessionValid(this.userId())) {
-				return this.recordState(key, { status: 'failed', phase, reason: 'invalid-session', draftPersisted: false });
+				return this.recordState(key, {
+					status: 'failed',
+					phase,
+					reason: 'invalid-session',
+					draftPersisted: false,
+				});
 			}
 			phase = 'draft';
 			const now = Date.now();
@@ -109,7 +115,12 @@ export class FormPersistenceService implements OnDestroy {
 			};
 			const draftResult = attemptWrite(() => this.storageService.setDraft(key, data));
 			if (!draftResult.success)
-				return this.recordState(key, { status: 'failed', phase, ...draftResult, draftPersisted: false });
+				return this.recordState(key, {
+					status: 'failed',
+					phase,
+					...draftResult,
+					draftPersisted: false,
+				});
 			phase = 'index';
 			const indexResult = this.updateUserIndex(this.userId(), key);
 			const indexed = this.storageService
@@ -125,7 +136,12 @@ export class FormPersistenceService implements OnDestroy {
 				});
 			}
 			if (!indexResult.success)
-				return this.recordState(key, { status: 'failed', phase, ...indexResult, draftPersisted: true });
+				return this.recordState(key, {
+					status: 'failed',
+					phase,
+					...indexResult,
+					draftPersisted: true,
+				});
 			if (this.isDraftStored(key, data) && indexed) this.removeLegacyDraft(entityType, entityId);
 			return this.recordState(key, { status: 'saved' });
 		} catch (error) {
@@ -169,7 +185,7 @@ export class FormPersistenceService implements OnDestroy {
 						const indexResult = this.updateUserIndex(this.userId(), key);
 						if (
 							!indexResult.success ||
-							!this.storageService.getUserDraftIndex(this.userId())?.draftKeys.includes(key)
+							!validIndex(this.storageService.getUserDraftIndex(this.userId()), this.userId())?.draftKeys.includes(key)
 						) {
 							this.storageService.removeItem(key);
 							return draft;
@@ -216,10 +232,13 @@ export class FormPersistenceService implements OnDestroy {
 	public deleteAllDrafts() {
 		this.cancelPendingSaves();
 		const userId = this.userId();
-		const index = this.storageService.getUserDraftIndex(userId);
+		const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
 		if (!index) return;
 		index.draftKeys.forEach((key) => {
-			if (key.startsWith(this.config.draftKeyPrefix) && this.storageService.getDraft(key)?.metadata.userId === userId) {
+			if (
+				key.startsWith(this.config.draftKeyPrefix) &&
+				validDraft(this.storageService.getDraft(key))?.metadata.userId === userId
+			) {
 				this.removeStoredDraft(key);
 			}
 		});
@@ -241,8 +260,10 @@ export class FormPersistenceService implements OnDestroy {
 	}
 
 	private readDraft<T>(key: string, entityType: string, entityId: string) {
-		const draft = this.storageService.getDraft<T>(key);
-		return draft?.metadata?.userId === this.userId() && draft.entityType === entityType && draft.entityId === entityId
+		const draft = validDraft<T>(this.storageService.getDraft<T>(key));
+		return draft?.metadata?.userId === this.userId() &&
+			draft.entityType === entityType &&
+			(draft.entityId ?? '') === entityId
 			? draft
 			: undefined;
 	}
@@ -261,7 +282,7 @@ export class FormPersistenceService implements OnDestroy {
 	}
 
 	private updateUserIndex(userId: string, draftKey: string): StorageWriteResult {
-		const index = this.storageService.getUserDraftIndex(userId);
+		const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
 		if (!index) return { success: false, reason: 'unavailable' };
 		if (!index.draftKeys.includes(draftKey)) index.draftKeys.push(draftKey);
 		index.lastActivity = Date.now();
@@ -269,7 +290,7 @@ export class FormPersistenceService implements OnDestroy {
 	}
 
 	private removeDraftFromIndex(userId: string, draftKey: string) {
-		const index = this.storageService.getUserDraftIndex(userId);
+		const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
 		if (!index) return;
 		index.draftKeys = index.draftKeys.filter((k) => k !== draftKey);
 		index.lastActivity = Date.now();
