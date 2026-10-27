@@ -30,7 +30,7 @@ export class FormPersistenceService implements OnDestroy {
 		this.states.update((states) => new Map(states).set(key, state));
 		return state;
 	}
-	private readonly pendingSaves = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly pendingSaves = new Map<string, { timer: ReturnType<typeof setTimeout>; save: () => void }>();
 
 	public ngOnDestroy() {
 		this.cancelPendingSaves();
@@ -59,17 +59,27 @@ export class FormPersistenceService implements OnDestroy {
 		const formData = form.getRawValue();
 		this.cancelPendingSave(key);
 		this.recordState(key, { status: 'pending' });
-		this.pendingSaves.set(
-			key,
-			setTimeout(() => {
-				this.pendingSaves.delete(key);
-				if (this.userId() !== userId || this.sessionManagerService.getSessionId() !== sessionId) {
-					this.recordState(key, { status: 'cancelled' });
-					return;
-				}
-				this.saveDraft(entityType, entityId, formData);
-			}, this.config.autoSaveDebounceTime),
-		);
+		const save = () => {
+			this.pendingSaves.delete(key);
+			if (this.userId() !== userId || this.sessionManagerService.getSessionId() !== sessionId) {
+				this.recordState(key, { status: 'cancelled' });
+				return;
+			}
+			this.saveDraft(entityType, entityId, formData);
+		};
+		this.pendingSaves.set(key, { timer: setTimeout(save, this.config.autoSaveDebounceTime), save });
+	}
+
+	/**
+	 * Immediately performs a pending debounced auto-save for an entity, if any.
+	 * @param entityType The type of the entity.
+	 * @param entityId The ID of the entity.
+	 */
+	public flushPendingSave(entityType: string, entityId: string): void {
+		const pending = this.pendingSaves.get(this.storageService.generateDraftKey(this.userId(), entityType, entityId));
+		if (!pending) return;
+		clearTimeout(pending.timer);
+		pending.save();
 	}
 
 	/**
@@ -297,9 +307,9 @@ export class FormPersistenceService implements OnDestroy {
 		this.storageService.setUserDraftIndex(userId, index);
 	}
 	private cancelPendingSave(key: string) {
-		const timer = this.pendingSaves.get(key);
-		if (timer !== undefined) {
-			clearTimeout(timer);
+		const pending = this.pendingSaves.get(key);
+		if (pending !== undefined) {
+			clearTimeout(pending.timer);
 			this.recordState(key, { status: 'cancelled' });
 		}
 		this.pendingSaves.delete(key);

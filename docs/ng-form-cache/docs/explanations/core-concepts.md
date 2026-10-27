@@ -38,6 +38,11 @@ Use `isSessionValid(userId)` before saving, including after starting a session w
 
 When `[fcAutoLoad]="true"`, the directive loads the newest draft as soon as the component mounts and optionally calls `[fcNotifyFunc]`.
 
+The directive follows changes to the bound `FormGroup`, `fcAutoSave` and `fcObjectId` without being recreated:
+
+- Replacing the `FormGroup` unsubscribes from the previous form; only the current form is saved, under the current identity. The draft is not restored again because the identity is unchanged.
+- Changing `fcAutoSave` or `fcObjectId` immediately flushes a pending debounced save of the previous identity (with the values captured for it), restores the new identity's draft without emitting `valueChanges` when `fcAutoLoad` is enabled, and marks the form pristine. Values retained from the previous identity, or set programmatically afterwards, are therefore not saved for the new identity until the user edits the form.
+
 ## Cleanup strategy
 
 `CleanupService` periodically executes three maintenance tasks:
