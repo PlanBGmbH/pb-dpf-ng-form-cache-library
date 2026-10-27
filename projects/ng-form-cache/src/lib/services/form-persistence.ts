@@ -1,6 +1,7 @@
 import { inject, Injectable, OnDestroy, signal } from '@angular/core';
 import { FormGroup } from '@angular/forms';
 import { attemptWrite, storageFailure } from '../helpers/storage-write';
+import { ownedDraftKeys, withOwnedDrafts } from '../helpers/user-drafts';
 import { DraftSaveState, StorageWriteResult } from '../types/storage-write-result';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
@@ -244,8 +245,9 @@ export class FormPersistenceService implements OnDestroy {
 	}
 
 	/**
-	 * Deletes all drafts for the current user, including unindexed drafts when the adapter supports `keys()`.
-	 * @returns The result of clearing the user's draft index.
+	 * Deletes all drafts for the current user. Adapters implementing `keys()` are scanned for drafts
+	 * owned by the user, so drafts missing from an index overwritten by another tab are deleted too.
+	 * @returns The result of rewriting the user's draft index.
 	 */
 	public deleteAllDrafts(): StorageWriteResult {
 		this.cancelPendingSaves();
@@ -271,10 +273,12 @@ export class FormPersistenceService implements OnDestroy {
 				this.removeStoredDraft(key);
 			}
 		}
-		if (!index) return { success: true };
-		index.draftKeys = [];
-		index.lastActivity = Date.now();
-		return attemptWrite(() => this.storageService.setUserDraftIndex(userId, index));
+		const latest = validIndex(this.storageService.getUserDraftIndex(userId), userId);
+		if (!latest) return { success: true };
+		// Rebuild membership from records still present, such as drafts saved meanwhile by another tab.
+		latest.draftKeys = ownedDraftKeys(this.storageService, this.config.draftKeyPrefix, userId, latest.draftKeys);
+		latest.lastActivity = Date.now();
+		return attemptWrite(() => this.storageService.setUserDraftIndex(userId, latest));
 	}
 
 	private legacyDraftKey(entityType: string, entityId: string) {
@@ -314,7 +318,10 @@ export class FormPersistenceService implements OnDestroy {
 	private updateUserIndex(userId: string, draftKey: string): StorageWriteResult {
 		const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
 		if (!index) return { success: false, reason: 'unavailable' };
-		if (!index.draftKeys.includes(draftKey)) index.draftKeys.push(draftKey);
+		index.draftKeys = withOwnedDrafts(this.storageService, this.config.draftKeyPrefix, userId, [
+			...index.draftKeys,
+			draftKey,
+		]);
 		index.lastActivity = Date.now();
 		return attemptWrite(() => this.storageService.setUserDraftIndex(userId, index));
 	}
@@ -322,7 +329,9 @@ export class FormPersistenceService implements OnDestroy {
 	private removeDraftFromIndex(userId: string, draftKey: string) {
 		const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
 		if (!index) return;
-		index.draftKeys = index.draftKeys.filter((k) => k !== draftKey);
+		index.draftKeys = withOwnedDrafts(this.storageService, this.config.draftKeyPrefix, userId, index.draftKeys).filter(
+			(k) => k !== draftKey,
+		);
 		index.lastActivity = Date.now();
 		this.storageService.setUserDraftIndex(userId, index);
 	}

@@ -2,6 +2,7 @@ import { isPlatformBrowser } from '@angular/common';
 import { inject, Injectable, NgZone, OnDestroy, PLATFORM_ID, signal } from '@angular/core';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { attemptWrite } from '../helpers/storage-write';
+import { ownedDraftKeys, withOwnedDrafts } from '../helpers/user-drafts';
 import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
 import { SESSION_MANAGER_SERVICE } from '../types/service-tokens';
 import { StoredEntityData } from '../types/storage-entity-data';
@@ -77,21 +78,27 @@ export class CleanupService implements OnDestroy {
 			if (!index || now - index.lastActivity <= this.persistentConfig.staleThreshold) {
 				continue;
 			}
-			for (const draftKey of index.draftKeys) {
-				if (
-					draftKey.startsWith(this.config.draftKeyPrefix) &&
-					validDraft(this.storageService.getDraft(draftKey))?.metadata.userId === index.userId
-				) {
+			for (const draftKey of ownedDraftKeys(this.storageService, this.config.draftKeyPrefix, userId, index.draftKeys)) {
+				const draft = validDraft(this.storageService.getDraft(draftKey));
+				// A draft saved after the index was read belongs to a concurrently active tab.
+				if (draft && now - draft.metadata.lastModified > this.persistentConfig.staleThreshold) {
 					this.storageService.removeItem(draftKey);
 					this.report.stale.push(draftKey);
 				}
 			}
+			const remaining = ownedDraftKeys(this.storageService, this.config.draftKeyPrefix, userId, index.draftKeys);
 			if (
-				index.sessionId &&
-				index.sessionId === this.sessionManagerService.getSessionId() &&
-				this.sessionManagerService.isSessionValid(index.userId)
+				remaining.length ||
+				(index.sessionId &&
+					index.sessionId === this.sessionManagerService.getSessionId() &&
+					this.sessionManagerService.isSessionValid(index.userId))
 			) {
-				index.draftKeys = [];
+				index.draftKeys = remaining;
+				for (const draftKey of remaining)
+					index.lastActivity = Math.max(
+						index.lastActivity,
+						validDraft(this.storageService.getDraft(draftKey))?.metadata.lastModified ?? 0,
+					);
 				this.writeIndex(index.userId, index);
 			} else {
 				this.storageService.removeItem(key);
@@ -137,7 +144,9 @@ export class CleanupService implements OnDestroy {
 	private removeDraftKeyFromIndex(userId: string, draftKey: string) {
 		const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
 		if (!index) return;
-		index.draftKeys = index.draftKeys.filter((key) => key !== draftKey);
+		index.draftKeys = withOwnedDrafts(this.storageService, this.config.draftKeyPrefix, userId, index.draftKeys).filter(
+			(key) => key !== draftKey,
+		);
 		this.writeIndex(userId, index);
 	}
 
