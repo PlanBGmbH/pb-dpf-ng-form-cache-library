@@ -2,6 +2,7 @@ import { isPlatformBrowser } from '@angular/common';
 import { inject, Injectable, NgZone, OnDestroy, PLATFORM_ID } from '@angular/core';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
+import { SESSION_MANAGER_SERVICE } from '../types/service-tokens';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
 import { validDraft, validIndex } from './storage-validation';
@@ -11,6 +12,7 @@ export class CleanupService implements OnDestroy {
 	private readonly storageService = inject(FORM_CACHE_STORAGE);
 	private readonly persistentConfig = inject(DRAFT_PERSISTENT_CONFIG);
 	private readonly config = inject(FORM_CACHE_CONFIG);
+	private readonly sessionManagerService = inject(SESSION_MANAGER_SERVICE);
 	private readonly zone = inject(NgZone);
 	private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 	private cleanupIntervalId?: ReturnType<typeof setInterval>;
@@ -72,7 +74,11 @@ export class CleanupService implements OnDestroy {
 					this.storageService.removeItem(draftKey);
 				}
 			}
-			if (index.sessionId && index.sessionId === this.storageService.getItem<string>(this.config.sessionIdKey)) {
+			if (
+				index.sessionId &&
+				index.sessionId === this.sessionManagerService.getSessionId() &&
+				this.sessionManagerService.isSessionValid(index.userId)
+			) {
 				index.draftKeys = [];
 				this.storageService.setUserDraftIndex(index.userId, index);
 			} else {

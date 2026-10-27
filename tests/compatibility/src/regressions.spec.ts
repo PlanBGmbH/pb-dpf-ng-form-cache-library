@@ -493,7 +493,7 @@ describe('Draft lifecycle regressions', () => {
 			cleanup.runCleanup();
 			expect(storage.getDraft(key)).toBeUndefined();
 			expect(storage.getUserDraftIndex('alice')).toEqual({ ...index, draftKeys: [] });
-			expect(storage.getItem(defaultConfig.sessionIdKey)).toBe(index.sessionId);
+			expect(session.getSessionId()).toBe(index.sessionId);
 			expect(session.isSessionValid('alice')).toBeTrue();
 			cleanup.runCleanup();
 			persistence.autoSave(form('resumed'), 'profile', '1');
@@ -541,7 +541,7 @@ describe('Draft lifecycle regressions', () => {
 		expect(persistence.hasDraft('profile', '1')).toBeFalse();
 		expect(persistence.hasDraft('profile', '2')).toBeFalse();
 		expect(storage.getUserDraftIndex('alice')).toBeUndefined();
-		expect(storage.getItem(defaultConfig.sessionIdKey)).toBeUndefined();
+		expect(session.getSessionId()).toBeUndefined();
 		expect(session.isSessionValid('alice')).toBeFalse();
 	});
 
@@ -559,6 +559,7 @@ describe('Draft lifecycle regressions', () => {
 
 	it('does not recreate an arbitrary missing session index', () => {
 		const { persistence, storage, cleanup } = setup();
+		storage.setItem(defaultConfig.sessionIdKey, 'unverified-session');
 		storage.removeItem(storage.generateIndexKey('alice'));
 		cleanup.runCleanup();
 		persistence.autoSave(form('missing index'), 'profile', '1');
