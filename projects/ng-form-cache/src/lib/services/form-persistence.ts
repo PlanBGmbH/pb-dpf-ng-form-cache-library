@@ -31,7 +31,7 @@ export class FormPersistenceService implements OnDestroy {
 		this.states.update((states) => new Map(states).set(key, state));
 		return state;
 	}
-	private readonly pendingSaves = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly pendingSaves = new Map<string, { timer: ReturnType<typeof setTimeout>; save: () => void }>();
 
 	public ngOnDestroy() {
 		this.cancelPendingSaves();
@@ -60,17 +60,27 @@ export class FormPersistenceService implements OnDestroy {
 		const formData = form.getRawValue();
 		this.cancelPendingSave(key);
 		this.recordState(key, { status: 'pending' });
-		this.pendingSaves.set(
-			key,
-			setTimeout(() => {
-				this.pendingSaves.delete(key);
-				if (this.userId() !== userId || this.sessionManagerService.getSessionId() !== sessionId) {
-					this.recordState(key, { status: 'cancelled' });
-					return;
-				}
-				this.saveDraft(entityType, entityId, formData);
-			}, this.config.autoSaveDebounceTime),
-		);
+		const save = () => {
+			this.pendingSaves.delete(key);
+			if (this.userId() !== userId || this.sessionManagerService.getSessionId() !== sessionId) {
+				this.recordState(key, { status: 'cancelled' });
+				return;
+			}
+			this.saveDraft(entityType, entityId, formData);
+		};
+		this.pendingSaves.set(key, { timer: setTimeout(save, this.config.autoSaveDebounceTime), save });
+	}
+
+	/**
+	 * Immediately performs a pending debounced auto-save for an entity, if any.
+	 * @param entityType The type of the entity.
+	 * @param entityId The ID of the entity.
+	 */
+	public flushPendingSave(entityType: string, entityId: string): void {
+		const pending = this.pendingSaves.get(this.storageService.generateDraftKey(this.userId(), entityType, entityId));
+		if (!pending) return;
+		clearTimeout(pending.timer);
+		pending.save();
 	}
 
 	/**
@@ -136,13 +146,20 @@ export class FormPersistenceService implements OnDestroy {
 					draftPersisted: false,
 				});
 			}
-			if (!indexResult.success)
+			if (!indexResult.success) {
+				// Without key enumeration an unindexed new draft could never be found by deleteAllDrafts or cleanup.
+				const orphaned =
+					!currentDraft &&
+					!this.storageService.keys &&
+					!validIndex(this.storageService.getUserDraftIndex(this.userId()), this.userId())?.draftKeys.includes(key);
+				if (orphaned) this.storageService.removeItem(key);
 				return this.recordState(key, {
 					status: 'failed',
 					phase,
 					...indexResult,
-					draftPersisted: true,
+					draftPersisted: !orphaned,
 				});
+			}
 			if (this.isDraftStored(key, data) && indexed) this.removeLegacyDraft(entityType, entityId);
 			return this.recordState(key, { status: 'saved' });
 		} catch (error) {
@@ -230,20 +247,38 @@ export class FormPersistenceService implements OnDestroy {
 	/**
 	 * Deletes all drafts for the current user. Adapters implementing `keys()` are scanned for drafts
 	 * owned by the user, so drafts missing from an index overwritten by another tab are deleted too.
+	 * @returns The result of rewriting the user's draft index.
 	 */
-	public deleteAllDrafts() {
+	public deleteAllDrafts(): StorageWriteResult {
 		this.cancelPendingSaves();
 		const userId = this.userId();
 		const index = validIndex(this.storageService.getUserDraftIndex(userId), userId);
-		const candidates = index?.draftKeys ?? [];
-		for (const key of ownedDraftKeys(this.storageService, this.config.draftKeyPrefix, userId, candidates))
-			this.removeStoredDraft(key);
+		index?.draftKeys.forEach((key) => {
+			if (
+				key.startsWith(this.config.draftKeyPrefix) &&
+				validDraft(this.storageService.getDraft(key))?.metadata.userId === userId
+			) {
+				this.removeStoredDraft(key);
+			}
+		});
+		// Drafts whose index update failed are only reachable through enumeration.
+		for (const key of this.storageService.keys?.() ?? []) {
+			if (!key.startsWith(this.config.draftKeyPrefix)) continue;
+			const draft = validDraft(this.storageService.getDraft(key));
+			if (
+				draft?.metadata.userId === userId &&
+				(key === this.storageService.generateDraftKey(userId, draft.entityType, draft.entityId ?? '') ||
+					key === this.legacyDraftKey(draft.entityType, draft.entityId ?? ''))
+			) {
+				this.removeStoredDraft(key);
+			}
+		}
 		const latest = validIndex(this.storageService.getUserDraftIndex(userId), userId);
-		if (!latest) return;
+		if (!latest) return { success: true };
 		// Rebuild membership from records still present, such as drafts saved meanwhile by another tab.
 		latest.draftKeys = ownedDraftKeys(this.storageService, this.config.draftKeyPrefix, userId, latest.draftKeys);
 		latest.lastActivity = Date.now();
-		this.storageService.setUserDraftIndex(userId, latest);
+		return attemptWrite(() => this.storageService.setUserDraftIndex(userId, latest));
 	}
 
 	private legacyDraftKey(entityType: string, entityId: string) {
@@ -301,9 +336,9 @@ export class FormPersistenceService implements OnDestroy {
 		this.storageService.setUserDraftIndex(userId, index);
 	}
 	private cancelPendingSave(key: string) {
-		const timer = this.pendingSaves.get(key);
-		if (timer !== undefined) {
-			clearTimeout(timer);
+		const pending = this.pendingSaves.get(key);
+		if (pending !== undefined) {
+			clearTimeout(pending.timer);
 			this.recordState(key, { status: 'cancelled' });
 		}
 		this.pendingSaves.delete(key);

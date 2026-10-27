@@ -1,4 +1,4 @@
-import { Component, provideZonelessChangeDetection } from '@angular/core';
+import { Component, provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import {
@@ -18,6 +18,17 @@ class TestForm {
 		name: new FormControl(''),
 		disabled: new FormControl({ value: 'included', disabled: true }),
 	});
+}
+
+@Component({
+	imports: [ReactiveFormsModule, AutoSaveDirective],
+	template:
+		'<form [formGroup]="form()" [fcAutoSave]="type()" [fcObjectId]="id()"><input formControlName="name" /></form>',
+})
+class DynamicForm {
+	readonly form = signal(new FormGroup({ name: new FormControl('') }));
+	readonly type = signal('profile');
+	readonly id = signal('a');
 }
 
 describe('Published package in a zoneless Angular consumer', () => {
@@ -85,6 +96,90 @@ describe('Published package in a zoneless Angular consumer', () => {
 		expect(TestBed.inject(FORM_PERSISTENCE_SERVICE).loadDraft('profile', 'new')?.formData).toEqual({
 			name: 'Grace',
 			disabled: 'included',
+		});
+	});
+
+	describe('with dynamic forms and identities', () => {
+		const wait = () => new Promise((resolve) => setTimeout(resolve, 40));
+		const type = async (fixture: { nativeElement: HTMLElement }, value: string) => {
+			const input = fixture.nativeElement.querySelector('input') as HTMLInputElement;
+			input.value = value;
+			input.dispatchEvent(new Event('input'));
+		};
+
+		it('rebinds to a replaced FormGroup and ignores the previous one', async () => {
+			const service = TestBed.inject(FORM_PERSISTENCE_SERVICE);
+			const fixture = TestBed.createComponent(DynamicForm);
+			await fixture.whenStable();
+			const oldForm = fixture.componentInstance.form();
+			const newForm = new FormGroup({ name: new FormControl('') });
+			fixture.componentInstance.form.set(newForm);
+			await fixture.whenStable();
+			await type(fixture, 'New');
+			expect(newForm.controls.name.value).toBe('New');
+			await wait();
+			expect(service.loadDraft('profile', 'a')?.formData).toEqual({ name: 'New' });
+
+			service.deleteDraft('profile', 'a');
+			const save = spyOn(service, 'autoSave').and.callThrough();
+			oldForm.markAsDirty();
+			oldForm.controls.name.setValue('Old');
+			expect(save).not.toHaveBeenCalled();
+			newForm.controls.name.setValue('Newer');
+			expect(save).toHaveBeenCalledOnceWith(newForm, 'profile', 'a');
+		});
+
+		it('restores the new identity and never writes retained values to it', async () => {
+			const service = TestBed.inject(FORM_PERSISTENCE_SERVICE);
+			service.saveDraft('profile', 'a', { name: 'Ada' });
+			service.saveDraft('profile', 'b', { name: 'Bob' });
+			const fixture = TestBed.createComponent(DynamicForm);
+			await fixture.whenStable();
+			const form = fixture.componentInstance.form();
+			expect(form.controls.name.value).toBe('Ada');
+
+			await type(fixture, 'Ada edited');
+			const changed = jasmine.createSpy('valueChanges');
+			form.valueChanges.subscribe(changed);
+			fixture.componentInstance.id.set('b');
+			await fixture.whenStable();
+			expect(form.controls.name.value).toBe('Bob');
+			expect(changed).not.toHaveBeenCalled();
+			expect(form.dirty).toBeFalse();
+			// The pending edit of the previous identity is flushed to its own key.
+			expect(service.loadDraft('profile', 'a')?.formData).toEqual({ name: 'Ada edited' });
+			expect(service.loadDraft('profile', 'b')?.formData).toEqual({ name: 'Bob' });
+
+			await type(fixture, 'Bob edited');
+			await wait();
+			expect(service.loadDraft('profile', 'a')?.formData).toEqual({ name: 'Ada edited' });
+			expect(service.loadDraft('profile', 'b')?.formData).toEqual({ name: 'Bob edited' });
+		});
+
+		it('does not save values retained from the previous identity without a user edit', async () => {
+			const service = TestBed.inject(FORM_PERSISTENCE_SERVICE);
+			service.saveDraft('profile', 'a', { name: 'Ada' });
+			const fixture = TestBed.createComponent(DynamicForm);
+			await fixture.whenStable();
+			await type(fixture, 'Ada edited');
+			fixture.componentInstance.type.set('order');
+			await fixture.whenStable();
+			fixture.componentInstance.form().controls.name.setValue('Programmatic');
+			await wait();
+			expect(service.hasDraft('order', 'a')).toBeFalse();
+			expect(service.loadDraft('profile', 'a')?.formData).toEqual({ name: 'Ada edited' });
+		});
+
+		it('stops saving after the directive is destroyed', async () => {
+			const service = TestBed.inject(FORM_PERSISTENCE_SERVICE);
+			const fixture = TestBed.createComponent(DynamicForm);
+			await fixture.whenStable();
+			const form = fixture.componentInstance.form();
+			fixture.destroy();
+			const save = spyOn(service, 'autoSave');
+			form.markAsDirty();
+			form.controls.name.setValue('After');
+			expect(save).not.toHaveBeenCalled();
 		});
 	});
 });

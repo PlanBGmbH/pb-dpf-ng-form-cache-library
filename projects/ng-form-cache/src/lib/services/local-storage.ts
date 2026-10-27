@@ -116,6 +116,26 @@ export class LocalStorageService implements FormCacheStorage {
 	}
 
 	/**
+	 * Notifies about localStorage changes made by other documents. Events of other storage areas are ignored.
+	 * Subclasses persisting to another backend should override this method.
+	 * @param listener Receives the changed key, or `null` when storage was cleared.
+	 * @returns A function removing the listener.
+	 */
+	public watch(listener: (key: string | null) => void): () => void {
+		if (!this.isBrowser) return () => undefined;
+		const handler = (event: StorageEvent) => {
+			try {
+				if (event.storageArea && event.storageArea !== localStorage) return;
+			} catch {
+				return;
+			}
+			listener(event.key);
+		};
+		window.addEventListener('storage', handler);
+		return () => window.removeEventListener('storage', handler);
+	}
+
+	/**
 	 * Generates a storage key for a draft.
 	 * @param userId The user's ID.
 	 * @param entityType The type of the entity.

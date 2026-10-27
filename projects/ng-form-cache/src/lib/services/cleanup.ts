@@ -1,11 +1,14 @@
 import { isPlatformBrowser } from '@angular/common';
-import { inject, Injectable, NgZone, OnDestroy, PLATFORM_ID } from '@angular/core';
+import { inject, Injectable, NgZone, OnDestroy, PLATFORM_ID, signal } from '@angular/core';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
+import { attemptWrite } from '../helpers/storage-write';
 import { ownedDraftKeys, withOwnedDrafts } from '../helpers/user-drafts';
 import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
 import { SESSION_MANAGER_SERVICE } from '../types/service-tokens';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
+import { CleanupReport } from '../types/storage-write-result';
+import { UserDraftIndex } from '../types/user-draft-index';
 import { validDraft, validIndex } from './storage-validation';
 
 @Injectable()
@@ -17,6 +20,10 @@ export class CleanupService implements OnDestroy {
 	private readonly zone = inject(NgZone);
 	private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 	private cleanupIntervalId?: ReturnType<typeof setInterval>;
+	private report: CleanupReport = { expired: [], stale: [], evicted: [], failures: [] };
+	private readonly lastReportState = signal<CleanupReport | undefined>(undefined);
+	/** The report of the most recent cleanup run, including periodic runs. */
+	public readonly lastReport = this.lastReportState.asReadonly();
 
 	public ngOnDestroy() {
 		this.stop();
@@ -38,10 +45,13 @@ export class CleanupService implements OnDestroy {
 	}
 
 	/** Runs maintenance against the configured adapter, if it supports key enumeration. */
-	public runCleanup() {
+	public runCleanup(): CleanupReport {
+		this.report = { expired: [], stale: [], evicted: [], failures: [] };
 		this.cleanupExpiredDrafts();
 		this.cleanupStaleSessions();
 		this.manageStorageQuota();
+		this.lastReportState.set(this.report);
+		return this.report;
 	}
 
 	private keys(prefix: string) {
@@ -54,6 +64,7 @@ export class CleanupService implements OnDestroy {
 			const draft = validDraft(this.storageService.getDraft(key));
 			if (draft && draft.metadata.expiresAt <= now) {
 				this.storageService.removeItem(key);
+				this.report.expired.push(key);
 				this.removeDraftKeyFromIndex(draft.metadata.userId, key);
 			}
 		}
@@ -70,8 +81,10 @@ export class CleanupService implements OnDestroy {
 			for (const draftKey of ownedDraftKeys(this.storageService, this.config.draftKeyPrefix, userId, index.draftKeys)) {
 				const draft = validDraft(this.storageService.getDraft(draftKey));
 				// A draft saved after the index was read belongs to a concurrently active tab.
-				if (draft && now - draft.metadata.lastModified > this.persistentConfig.staleThreshold)
+				if (draft && now - draft.metadata.lastModified > this.persistentConfig.staleThreshold) {
 					this.storageService.removeItem(draftKey);
+					this.report.stale.push(draftKey);
+				}
 			}
 			const remaining = ownedDraftKeys(this.storageService, this.config.draftKeyPrefix, userId, index.draftKeys);
 			if (
@@ -86,7 +99,7 @@ export class CleanupService implements OnDestroy {
 						index.lastActivity,
 						validDraft(this.storageService.getDraft(draftKey))?.metadata.lastModified ?? 0,
 					);
-				this.storageService.setUserDraftIndex(index.userId, index);
+				this.writeIndex(index.userId, index);
 			} else {
 				this.storageService.removeItem(key);
 			}
@@ -113,6 +126,7 @@ export class CleanupService implements OnDestroy {
 		for (const { key, draft, size } of drafts) {
 			if (totalSize <= this.persistentConfig.storageQuota) break;
 			this.storageService.removeItem(key);
+			this.report.evicted.push(key);
 			const indexKey = this.storageService.generateIndexKey(draft.metadata.userId);
 			const before = validIndex(this.storageService.getUserDraftIndex(draft.metadata.userId), draft.metadata.userId);
 			const previousSize = before ? this.sizeOf(indexKey, before) : 0;
@@ -133,6 +147,11 @@ export class CleanupService implements OnDestroy {
 		index.draftKeys = withOwnedDrafts(this.storageService, this.config.draftKeyPrefix, userId, index.draftKeys).filter(
 			(key) => key !== draftKey,
 		);
-		this.storageService.setUserDraftIndex(userId, index);
+		this.writeIndex(userId, index);
+	}
+
+	private writeIndex(userId: string, index: UserDraftIndex) {
+		const result = attemptWrite(() => this.storageService.setUserDraftIndex(userId, index));
+		if (!result.success) this.report.failures.push({ ...result, userId });
 	}
 }
