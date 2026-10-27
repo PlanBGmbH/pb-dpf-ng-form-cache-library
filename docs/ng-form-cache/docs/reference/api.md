@@ -62,7 +62,7 @@ Handles serialization, persistence, and index management.
 | --- | --- |
 | `setUserId(id: string \| number)` | Registers the active user and cancels pending saves when the user changes. Start or resume a matching session before saving. |
 | `autoSave(form: FormGroup, entityType: string, entityId: string)` | Debounced per entity; pending edits are discarded after user/session changes. |
-| `saveDraft(entityType: string, entityId: string, formData: unknown)` | Immediately persist a custom payload. |
+| `saveDraft(entityType: string, entityId: string, formData: unknown)` | Immediately persist a custom payload and return `DraftSaveState`. |
 | `loadDraft<T>(entityType: string, entityId: string): StoredEntityData<T> \| undefined` | Return an unexpired draft; expired drafts and their index entries are removed. |
 | `deleteDraft(entityType: string, entityId: string)` | Cancel pending saves, remove a single draft, and update the user index. |
 | `deleteAllDrafts()` | Clears every draft for the current user and resets the index. |
@@ -74,10 +74,10 @@ Manages session identifiers and synchronizes them across tabs.
 
 | Method | Description |
 | --- | --- |
-| `startSession(userId: string): string` | Generates and stores a new session id, returns it. |
-| `endSession(userId: string)` | Clears the session id from storage and updates the draft index. |
-| `getSessionId(): string \| undefined` | Returns the cached or stored session id. |
-| `isSessionValid(userId: string): boolean` | Verifies that the stored index belongs to the active session. |
+| `startSession(userId: string): string` | Starts or resumes the application-wide session for this user; returns its candidate id. Check `isSessionValid()` to confirm persistence. |
+| `endSession(userId: string)` | Revokes the observed session across tabs, retains drafts, and returns `StorageWriteResult`. A failed write leaves the session active. |
+| `getSessionId(): string \| undefined` | Reads the current persisted, unrevoked session id. |
+| `isSessionValid(userId: string): boolean` | Verifies the persisted session owner; legacy string sessions use a validated index. |
 
 ### `CleanupService`
 
@@ -91,7 +91,7 @@ Runs maintenance against the configured storage backend. Call `start()` explicit
 
 ### `LocalStorageService`
 
-Default `FormCacheStorage` adapter that persists JSON to `window.localStorage`, with a `keys()` snapshot for cleanup. Browser storage operations become no-ops on the server. Implements all interface methods and prefixes keys using `FormCacheConfig`.
+Default `FormCacheStorage` adapter that persists JSON to `window.localStorage`, with a `keys()` snapshot for cleanup. Browser storage reads return no data on the server; writes report `unavailable`. Implements all interface methods and prefixes keys using `FormCacheConfig`.
 
 ## Utility functions
 
@@ -114,3 +114,33 @@ Parses JSON and patches the form instance. Logs an error if parsing fails.
 - `FormCacheStorage`: Interface that custom storage implementations must satisfy.
 
 Use these types to add strong typing to your application layer or when writing custom adapters.
+
+## Persisted record policy
+
+Draft metadata and user indexes use schema version 1. Valid records from the original unversioned format are normalized on read and written as version 1 on the next save. Runtime checks validate metadata, timestamps, index fields, and ownership before records are used. The generic `getItem<T>()` remains a raw JSON API; use `getDraft()` and `getUserDraftIndex()` for validated cache records.
+
+Malformed JSON, invalid records, and unsupported versions are treated as unavailable and left in storage for application recovery. Explicitly saving to the same key replaces its contents. Cleanup and bulk deletion only follow keys belonging to validated drafts for the expected user; they do not erase unrelated data referenced by a damaged index. Payload types remain the application's responsibility.
+
+### Draft key migration
+
+The built-in adapter generates `draftKeyPrefix + "v2:" + encodeURIComponent(JSON.stringify([userId, entityType, entityId]))`, additionally escaping underscores as `%5F`. Tuple encoding supports separators, Unicode, and empty identifiers without collisions; escaping underscores prevents overlap with legacy keys. Index keys retain their existing format. Treat storage keys as opaque and always use the adapter's key generation methods.
+
+Reading an old draft by its identity migrates it and updates its user index. Migration requires all identity fields to match and retains the old copy unless both writes can be verified. Existing drafts that already collided in the old format cannot be reconstructed if previously overwritten. Optional `FormCacheStorage.removeDraft(key)` allows adapters to erase identity-checked legacy copies during deletion.
+
+## Save outcomes
+
+`saveDraft()` returns a `DraftSaveState`. `getSaveState(entityType, entityId)` reads the reactive state for the current user; it can be called directly in an Angular template. `saveStates` is a readonly signal containing states by generated storage key. States are `idle`, `pending`, `saved`, `failed`, or `cancelled`. A failed state includes `phase` (`session`, `draft`, or `index`), `reason`, an optional original `error`, and `draftPersisted`. An index failure can leave a recoverable draft in storage; it is still reported as failed so the application can retry. A saved state acknowledges that synchronous save and does not promise retention after later edits, deletion, or cleanup.
+
+The built-in adapter returns `StorageWriteResult` from `setItem`, `setDraft`, and `setUserDraftIndex`: either `{ success: true }` or `{ success: false, reason, error? }`. Reasons are `quota`, `access`, `serialization`, `unavailable`, and `unknown`. Persistence additionally reports `invalid-session`. A failed draft write never updates the user index. Custom adapters may still return `void` (assumed success) or throw; to reliably report swallowed failures, adopt explicit results.
+
+Quota recovery makes exactly one retry after removing validated expired drafts. It preserves active drafts and unrelated storage. Access and serialization failures are not retried automatically. The application can retain form edits, display `getSaveState(...).status`, and offer a button calling `saveDraft()` again, as shown in the sample. Server writes with the default browser adapter report `unavailable`.
+
+## Cross-tab ownership and conflicts
+
+The default adapter treats each stored draft as authoritative. `getUserDraftIndex()` reconciles keys and activity timestamps against validated draft records on every read, recovering entries omitted by a stale concurrent index write or a missing index. Index reads scan storage, so their cost grows with the stored key count. Use this method for listing drafts; raw `getItem()` does not reconcile an index. Invalid or unsupported index records remain unavailable until explicitly repaired. Two writes to the same draft use last-successful-write-wins behavior; the library does not merge form payloads. A save state acknowledges the local write, not exclusive ownership of that draft.
+
+There is one application-wide session for the configured `sessionIdKey`. A schema version 1 session record contains `userId` and `sessionId`. Starting a session for the same user resumes it; starting one for another user replaces the active session. Valid legacy string sessions are migrated on `startSession()`. Session ownership is independent of the advisory user index. `startSession()` retains its string return contract, but the returned candidate id does not imply a successful storage write; use `isSessionValid(userId)` before saving.
+
+`endSession(userId)` revokes the caller's observed matching session for all tabs and retains its drafts. It returns a write result so an application can report a failed logout. Per-session markers under `sessionIdKey + ":revoked:"` avoid removing or overwriting a newer login during a race. These small markers are retained to prevent stale session records from becoming valid again and are outside the draft/index quota budget. Session reads check persisted state without waiting for storage events. Pending saves are cancelled when they observe logout or session replacement; a synchronous write already in progress can still finish. Draft deletion and cleanup are independent of authentication logout; this cache session is not an authentication boundary.
+
+These conflict guarantees apply to the built-in adapter and subclasses retaining its reconciliation methods and implementing `keys()`. A custom shared adapter must implement equivalent discovery or transactional index updates. Session-storage adapters share storage within a browser tab, rather than across tabs.

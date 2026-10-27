@@ -17,3 +17,4 @@ export * from './lib/types/storage-key';
 export * from './lib/types/storage-metadata';
 export * from './lib/types/storage-service';
 export * from './lib/types/user-draft-index';
+export * from './lib/types/storage-write-result';

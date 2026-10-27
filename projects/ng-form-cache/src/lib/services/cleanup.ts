@@ -4,7 +4,6 @@ import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { DRAFT_PERSISTENT_CONFIG } from '../types/persistence-config';
 import { StoredEntityData } from '../types/storage-entity-data';
 import { FORM_CACHE_STORAGE } from '../types/storage-service';
-import { UserDraftIndex } from '../types/user-draft-index';
 
 @Injectable()
 export class CleanupService implements OnDestroy {
@@ -59,7 +58,7 @@ export class CleanupService implements OnDestroy {
 	private cleanupStaleSessions() {
 		const now = Date.now();
 		for (const key of this.keys(this.config.indexKeyPrefix)) {
-			const index = this.storageService.getItem<UserDraftIndex>(key);
+			const index = this.storageService.getUserDraftIndex(key.slice(this.config.indexKeyPrefix.length));
 			if (
 				!index ||
 				!Array.isArray(index.draftKeys) ||
@@ -68,7 +67,12 @@ export class CleanupService implements OnDestroy {
 				continue;
 			}
 			for (const draftKey of index.draftKeys) {
-				if (draftKey.startsWith(this.config.draftKeyPrefix)) this.storageService.removeItem(draftKey);
+				if (
+					draftKey.startsWith(this.config.draftKeyPrefix) &&
+					this.storageService.getDraft(draftKey)?.metadata.userId === index.userId
+				) {
+					this.storageService.removeItem(draftKey);
+				}
 			}
 			this.storageService.removeItem(key);
 		}
@@ -85,7 +89,7 @@ export class CleanupService implements OnDestroy {
 			drafts.push({ key, draft, size });
 		}
 		for (const key of this.keys(this.config.indexKeyPrefix)) {
-			const index = this.storageService.getItem<UserDraftIndex>(key);
+			const index = this.storageService.getUserDraftIndex(key.slice(this.config.indexKeyPrefix.length));
 			if (index) totalSize += this.sizeOf(key, index);
 		}
 
