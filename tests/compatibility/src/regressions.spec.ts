@@ -166,6 +166,31 @@ describe('Draft lifecycle regressions', () => {
 				expect(persistence.hasDraft('order_item', '42')).toBeFalse();
 			});
 
+			it('reconciles legacy index entries without migrating during an index read', () => {
+				const { storage, key, legacyKey, draft } = seedLegacy();
+				const writeDraft = spyOn(storage, 'setDraft').and.callThrough();
+				const writeIndex = spyOn(storage, 'setUserDraftIndex').and.callThrough();
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+				expect(storage.getItem(key)).toBeUndefined();
+				expect(storage.getItem(legacyKey)).toEqual(draft);
+				expect(writeDraft).not.toHaveBeenCalled();
+				expect(writeIndex).not.toHaveBeenCalled();
+			});
+
+			for (const phase of ['draft', 'index'] as const) {
+				it(`retains legacy data when the migration ${phase} write reports failure`, () => {
+					const { persistence, storage, key, legacyKey, draft } = seedLegacy();
+					spyOn(storage, phase === 'draft' ? 'setDraft' : 'setUserDraftIndex').and.returnValue({
+						success: false,
+						reason: 'access',
+					});
+					expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
+					expect(storage.getItem(key)).toBeUndefined();
+					expect(storage.getItem(legacyKey)).toEqual(draft);
+					expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+				});
+			}
+
 			it('retains the legacy draft and index when migration cannot write', () => {
 				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
 				spyOn(storage, 'setDraft').and.stub();

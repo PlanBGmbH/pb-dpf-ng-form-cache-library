@@ -112,9 +112,9 @@ export class FormPersistenceService implements OnDestroy {
 				return this.recordState(key, { status: 'failed', phase, ...draftResult, draftPersisted: false });
 			phase = 'index';
 			const indexResult = this.updateUserIndex(this.userId(), key);
-			const indexed = this.storageService.getItem<{ draftKeys?: string[] }>(
-				this.storageService.generateIndexKey(this.userId()),
-			)?.draftKeys?.includes(key);
+			const indexed = this.storageService
+				.getItem<{ draftKeys?: string[] }>(this.storageService.generateIndexKey(this.userId()))
+				?.draftKeys?.includes(key);
 			if (legacyDraft && (!indexResult.success || !indexed)) {
 				this.storageService.removeItem(key);
 				return this.recordState(key, {
@@ -167,7 +167,10 @@ export class FormPersistenceService implements OnDestroy {
 				if (this.isDraftStored(key, draft)) {
 					try {
 						const indexResult = this.updateUserIndex(this.userId(), key);
-						if (!indexResult.success || !this.storageService.getUserDraftIndex(this.userId())?.draftKeys.includes(key)) {
+						if (
+							!indexResult.success ||
+							!this.storageService.getUserDraftIndex(this.userId())?.draftKeys.includes(key)
+						) {
 							this.storageService.removeItem(key);
 							return draft;
 						}

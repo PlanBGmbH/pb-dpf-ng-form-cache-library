@@ -151,6 +151,7 @@ export class LocalStorageService implements FormCacheStorage {
 		// cannot hide a completed save: each read reconciles the backend's current keys.
 		for (const key of new Set([...this.keys(), ...(index?.draftKeys ?? [])])) {
 			if (!key.startsWith(this.config.draftKeyPrefix)) continue;
+			if (this.getItem(key) === undefined) continue;
 			const draft = this.getDraft(key);
 			if (draft?.metadata.userId !== userId) continue;
 			const canonical = this.generateDraftKey(userId, draft.entityType, draft.entityId ?? '');
