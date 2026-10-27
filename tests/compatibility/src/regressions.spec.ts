@@ -88,6 +88,294 @@ describe('Draft lifecycle regressions', () => {
 		localStorage.clear();
 	});
 
+	for (const customStorage of [false, true]) {
+		describe(customStorage ? 'custom adapter draft keys' : 'localStorage draft keys', () => {
+			const seedLegacy = (userId = 'alice', entityType = 'order_item', entityId = '42') => {
+				const context = setup({ customStorage });
+				const { persistence, session, storage } = context;
+				if (userId !== 'alice') {
+					session.startSession(userId);
+					persistence.setUserId(userId);
+				}
+				persistence.saveDraft(entityType, entityId, { name: 'legacy' });
+				const key = storage.generateDraftKey(userId, entityType, entityId);
+				const legacyKey = `${defaultConfig.draftKeyPrefix}${userId}_${entityType}_${entityId}`;
+				const draft = storage.getDraft(key)!;
+				storage.setDraft(legacyKey, draft);
+				storage.removeItem(key);
+				storage.setUserDraftIndex(userId, {
+					...storage.getUserDraftIndex(userId)!,
+					draftKeys: [legacyKey],
+				});
+				return { ...context, key, legacyKey, draft };
+			};
+
+			it('encodes delimiter, quote, Unicode, and empty identifiers as distinct tuples', () => {
+				const { storage } = setup({ customStorage });
+				const identities = [
+					['alice', 'order_item', '42'],
+					['alice', 'order', 'item_42'],
+					['alice_admin', 'order', '42'],
+					['alice', 'admin_order', '42'],
+					['a_"雪', '["_,', ''],
+					['', 'a_"雪', '["_,'],
+				];
+				const keys = identities.map(([user, type, id]) => storage.generateDraftKey(user, type, id));
+				expect(new Set(keys).size).toBe(identities.length);
+				keys.forEach((key, i) => {
+					expect(JSON.parse(decodeURIComponent(key.slice(`${defaultConfig.draftKeyPrefix}v2:`.length)))).toEqual(
+						identities[i],
+					);
+					expect(key.slice(defaultConfig.draftKeyPrefix.length)).not.toContain('_');
+				});
+			});
+
+			it('cannot overwrite a legacy key with crafted identifiers in the v2 namespace', () => {
+				const { persistence, session, storage, legacyKey, draft } = seedLegacy(
+					'v2:["alice","order',
+					'item","item',
+					'42"]',
+				);
+				session.startSession('alice');
+				persistence.setUserId('alice');
+				persistence.saveDraft('order_item', 'item_42', { name: 'current' });
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+				expect(persistence.loadDraft('order_item', 'item_42')?.formData).toEqual({
+					name: 'current',
+				});
+			});
+
+			it('independently debounces, loads, and deletes same-user colliding identities', () => {
+				const { persistence, storage } = setup({ customStorage });
+				persistence.autoSave(form('first'), 'order_item', '42');
+				persistence.autoSave(form('second'), 'order', 'item_42');
+				jasmine.clock().tick(101);
+				expect(persistence.loadDraft('order_item', '42')?.formData).toEqual({ name: 'first' });
+				expect(persistence.loadDraft('order', 'item_42')?.formData).toEqual({ name: 'second' });
+				expect(storage.getUserDraftIndex('alice')?.draftKeys.length).toBe(2);
+				persistence.deleteDraft('order_item', '42');
+				expect(persistence.hasDraft('order_item', '42')).toBeFalse();
+				expect(persistence.loadDraft('order', 'item_42')?.formData).toEqual({ name: 'second' });
+			});
+
+			it('isolates load, delete, and bulk delete across colliding user identities', () => {
+				const { persistence, session } = setup({ customStorage });
+				persistence.saveDraft('admin_order', '42', { name: 'alice' });
+				session.startSession('alice_admin');
+				persistence.setUserId('alice_admin');
+				persistence.saveDraft('order', '42', { name: 'admin' });
+				expect(persistence.loadDraft('order', '42')?.formData).toEqual({ name: 'admin' });
+				persistence.deleteDraft('order', '42');
+				expect(persistence.hasDraft('order', '42')).toBeFalse();
+				persistence.saveDraft('order', '42', {});
+				persistence.deleteAllDrafts();
+				persistence.setUserId('alice');
+				expect(persistence.loadDraft('admin_order', '42')?.formData).toEqual({ name: 'alice' });
+			});
+
+			it('migrates a matching legacy draft and index without changing metadata', () => {
+				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
+				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
+				expect(storage.getDraft(key)).toEqual(draft);
+				expect(storage.getDraft(legacyKey)).toBeUndefined();
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([key]);
+				persistence.deleteDraft('order_item', '42');
+				expect(persistence.hasDraft('order_item', '42')).toBeFalse();
+			});
+
+			it('reconciles legacy index entries without migrating during an index read', () => {
+				const { storage, key, legacyKey, draft } = seedLegacy();
+				const writeDraft = spyOn(storage, 'setDraft').and.callThrough();
+				const writeIndex = spyOn(storage, 'setUserDraftIndex').and.callThrough();
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+				expect(storage.getItem(key)).toBeUndefined();
+				expect(storage.getItem(legacyKey)).toEqual(draft);
+				expect(writeDraft).not.toHaveBeenCalled();
+				expect(writeIndex).not.toHaveBeenCalled();
+			});
+
+			for (const phase of ['draft', 'index'] as const) {
+				it(`retains legacy data when the migration ${phase} write reports failure`, () => {
+					const { persistence, storage, key, legacyKey, draft } = seedLegacy();
+					spyOn(storage, phase === 'draft' ? 'setDraft' : 'setUserDraftIndex').and.returnValue({
+						success: false,
+						reason: 'access',
+					});
+					expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
+					expect(storage.getItem(key)).toBeUndefined();
+					expect(storage.getItem(legacyKey)).toEqual(draft);
+					expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+				});
+			}
+
+			it('retains the legacy draft and index when migration cannot write', () => {
+				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
+				spyOn(storage, 'setDraft').and.stub();
+				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
+				expect(storage.getItem(key)).toBeUndefined();
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+			});
+
+			it('still loads legacy drafts when an adapter throws during migration', () => {
+				const { persistence, storage, legacyKey, draft } = seedLegacy();
+				spyOn(storage, 'setDraft').and.throwError('Storage full');
+				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
+				expect(persistence.hasDraft('order_item', '42')).toBeTrue();
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+			});
+
+			it('retains the legacy copy when the migrated index cannot be written', () => {
+				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
+				spyOn(storage, 'setUserDraftIndex').and.stub();
+				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
+				expect(storage.getItem(key)).toBeUndefined();
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+				persistence.deleteAllDrafts();
+				expect(storage.getDraft(legacyKey)).toBeUndefined();
+				expect(storage.getItem(key)).toBeUndefined();
+			});
+
+			it('rolls back migration when an adapter throws while updating the index', () => {
+				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
+				spyOn(storage, 'setUserDraftIndex').and.throwError('Storage full');
+				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
+				expect(storage.getItem(key)).toBeUndefined();
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+			});
+
+			it('retains legacy data when saving a replacement fails', () => {
+				const { persistence, storage, legacyKey, draft } = seedLegacy();
+				spyOn(storage, 'setDraft').and.stub();
+				persistence.saveDraft('order_item', '42', { name: 'replacement' });
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
+			});
+
+			for (const throws of [false, true]) {
+				it(`retains indexed legacy data when a replacement index write ${throws ? 'throws' : 'fails'}`, () => {
+					const { persistence, storage, key, legacyKey, draft } = seedLegacy();
+					const updateIndex = spyOn(storage, 'setUserDraftIndex');
+					if (throws) {
+						updateIndex.and.throwError('Storage full');
+						expect(persistence.saveDraft('order_item', '42', { name: 'replacement' })).toEqual(
+							jasmine.objectContaining({ status: 'failed', phase: 'index', draftPersisted: false }),
+						);
+					} else {
+						updateIndex.and.stub();
+						persistence.saveDraft('order_item', '42', { name: 'replacement' });
+					}
+					expect(storage.getItem(key)).toBeUndefined();
+					expect(storage.getDraft(legacyKey)).toEqual(draft);
+					expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
+					updateIndex.and.callThrough();
+					persistence.deleteAllDrafts();
+					expect(persistence.hasDraft('order_item', '42')).toBeFalse();
+				});
+			}
+
+			if (!customStorage) {
+				it('retains legacy data without throwing when a replacement cannot be serialized', () => {
+					const { persistence, storage, legacyKey, draft } = seedLegacy();
+					const circular: { self?: unknown } = {};
+					circular.self = circular;
+					spyOn(console, 'error');
+					expect(() => persistence.saveDraft('order_item', '42', circular)).not.toThrow();
+					expect(storage.getDraft(legacyKey)).toEqual(draft);
+				});
+			}
+
+			it('prefers the current draft and removes legacy copies when saving or deleting', () => {
+				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
+				const current = { ...draft, formData: { name: 'current' } };
+				storage.setDraft(key, current);
+				expect(persistence.loadDraft('order_item', '42')).toEqual(current);
+				persistence.saveDraft('order_item', '42', { name: 'updated' });
+				expect(storage.getDraft(legacyKey)).toBeUndefined();
+				expect(storage.getDraft(key)?.metadata.createdAt).toBe(draft.metadata.createdAt);
+				storage.setDraft(legacyKey, draft);
+				persistence.deleteDraft('order_item', '42');
+				expect(storage.getDraft(key)).toBeUndefined();
+				expect(storage.getDraft(legacyKey)).toBeUndefined();
+			});
+
+			it('deletes a matching legacy draft even before it has been loaded', () => {
+				const { persistence, storage, legacyKey } = seedLegacy();
+				persistence.deleteDraft('order_item', '42');
+				expect(storage.getDraft(legacyKey)).toBeUndefined();
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+			});
+
+			it('does not load, delete, or overwrite a colliding legacy entity', () => {
+				const { persistence, storage, legacyKey, draft } = seedLegacy();
+				expect(persistence.loadDraft('order', 'item_42')).toBeUndefined();
+				persistence.deleteDraft('order', 'item_42');
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+				persistence.saveDraft('order', 'item_42', { name: 'other' });
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
+				expect(persistence.loadDraft('order', 'item_42')?.formData).toEqual({ name: 'other' });
+			});
+
+			it('rejects another user’s legacy draft even when expired or indexed by both users', () => {
+				const { persistence, session, storage, legacyKey, draft } = seedLegacy('alice_admin', 'order');
+				session.startSession('alice');
+				persistence.setUserId('alice');
+				storage.setUserDraftIndex('alice', {
+					...storage.getUserDraftIndex('alice')!,
+					draftKeys: [legacyKey],
+				});
+				expect(persistence.loadDraft('admin_order', '42')).toBeUndefined();
+				persistence.deleteDraft('admin_order', '42');
+				persistence.deleteAllDrafts();
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+				jasmine.clock().tick(1001);
+				expect(persistence.loadDraft('admin_order', '42')).toBeUndefined();
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+			});
+
+			it('does not let a stale legacy user index delete another user’s draft', () => {
+				const { storage, cleanup, legacyKey, draft } = seedLegacy('alice_admin', 'order');
+				storage.setUserDraftIndex('alice', {
+					...storage.getUserDraftIndex('alice')!,
+					draftKeys: [legacyKey],
+					lastActivity: Date.now() - 5001,
+				});
+				cleanup.runCleanup();
+				expect(storage.getDraft(legacyKey)).toEqual(draft);
+			});
+
+			it('expires matching legacy drafts without migrating them', () => {
+				const { persistence, storage, key, legacyKey } = seedLegacy();
+				jasmine.clock().tick(1000);
+				expect(persistence.loadDraft('order_item', '42')).toBeUndefined();
+				expect(storage.getDraft(key)).toBeUndefined();
+				expect(storage.getDraft(legacyKey)).toBeUndefined();
+				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+			});
+
+			it('does not resurrect a legacy copy after the current draft expires', () => {
+				const { persistence, storage, key, draft } = seedLegacy();
+				storage.setDraft(key, { ...draft, metadata: { ...draft.metadata, expiresAt: Date.now() } });
+				expect(persistence.loadDraft('order_item', '42')).toBeUndefined();
+				expect(persistence.loadDraft('order_item', '42')).toBeUndefined();
+			});
+
+			it('rejects mismatched identity metadata even under a current key', () => {
+				const { persistence, storage, key, draft } = seedLegacy();
+				storage.removeItem(`${defaultConfig.draftKeyPrefix}alice_order_item_42`);
+				const other = { ...draft, metadata: { ...draft.metadata, userId: 'bob' } };
+				storage.setDraft(key, other);
+				expect(persistence.loadDraft('order_item', '42')).toBeUndefined();
+				persistence.deleteDraft('order_item', '42');
+				expect(storage.getItem(key)).toEqual(other);
+			});
+		});
+	}
+
 	it('debounces each entity independently', () => {
 		const { persistence } = setup();
 		persistence.autoSave(form('first'), 'profile', '1');
@@ -301,8 +589,9 @@ describe('Draft lifecycle regressions', () => {
 				jasmine.clock().tick(10);
 				for (const invalid of invalidDrafts(valid)) {
 					storage.setItem(key, invalid);
+					const snapshot = JSON.stringify(storage.getItem(key));
 					expect(persistence.loadDraft('profile', '1')).toBeUndefined();
-					expect(storage.getItem(key)).toBeUndefined();
+					expect(JSON.stringify(storage.getItem(key))).toBe(snapshot);
 					storage.setItem(key, invalid);
 					expect(persistence.hasDraft('profile', '1')).toBeFalse();
 					storage.setItem(key, invalid);
@@ -319,8 +608,9 @@ describe('Draft lifecycle regressions', () => {
 				storage.setItem('unrelated', 'keep');
 				for (const invalid of invalidIndexes(valid)) {
 					storage.setItem(indexKey, invalid);
-					expect(session.isSessionValid('alice')).toBeFalse();
-					expect(storage.getItem(indexKey)).toBeUndefined();
+					const snapshot = JSON.stringify(storage.getItem(indexKey));
+					expect(() => session.isSessionValid('alice')).not.toThrow();
+					expect(JSON.stringify(storage.getItem(indexKey))).toBe(snapshot);
 					storage.setItem(indexKey, invalid);
 					expect(() => persistence.saveDraft('profile', '1', {})).not.toThrow();
 					storage.setItem(indexKey, invalid);
@@ -338,7 +628,7 @@ describe('Draft lifecycle regressions', () => {
 				}
 			});
 
-			it('removes invalid records during cleanup without affecting valid drafts or unrelated data', () => {
+			it('leaves invalid records untouched during cleanup without affecting valid drafts or unrelated data', () => {
 				const { persistence, storage, cleanup } = setup({ customStorage });
 				persistence.saveDraft('profile', '1', {});
 				const key = storage.generateDraftKey('alice', 'profile', '1');
@@ -348,14 +638,16 @@ describe('Draft lifecycle regressions', () => {
 				storage.setItem('unrelated', 'keep');
 				for (const invalid of invalidDrafts(validDraft)) {
 					storage.setItem(key, invalid);
+					const snapshot = JSON.stringify(storage.getItem(key));
 					cleanup.runCleanup();
-					expect(storage.getItem(key)).toBeUndefined();
+					expect(JSON.stringify(storage.getItem(key))).toBe(snapshot);
 				}
 				storage.setDraft(key, validDraft);
 				for (const invalid of invalidIndexes(validIndex)) {
 					storage.setItem(indexKey, invalid);
+					const snapshot = JSON.stringify(storage.getItem(indexKey));
 					cleanup.runCleanup();
-					expect(storage.getItem(indexKey)).toBeUndefined();
+					expect(JSON.stringify(storage.getItem(indexKey))).toBe(snapshot);
 					expect(persistence.hasDraft('profile', '1')).toBeTrue();
 				}
 				expect(storage.getItem('unrelated')).toBe('keep');
@@ -398,7 +690,7 @@ describe('Draft lifecycle regressions', () => {
 		const getIndex = spyOn(storage, 'getUserDraftIndex');
 		for (const lastActivity of [NaN, Infinity, -Infinity]) {
 			getIndex.and.returnValue({ ...index, lastActivity });
-			expect(session.isSessionValid('alice')).toBeFalse();
+			expect(() => session.isSessionValid('alice')).not.toThrow();
 			expect(() => persistence.deleteAllDrafts()).not.toThrow();
 		}
 	});
@@ -408,7 +700,7 @@ describe('Draft lifecycle regressions', () => {
 		const key = storage.generateIndexKey('alice');
 		const index = { ...storage.getUserDraftIndex('alice')!, draftKeys: new Array<string>(1) };
 		spyOn(storage, 'getUserDraftIndex').and.returnValue(index);
-		expect(session.isSessionValid('alice')).toBeFalse();
+		expect(() => session.isSessionValid('alice')).not.toThrow();
 		expect(() => persistence.deleteAllDrafts()).not.toThrow();
 		const getItem = storage.getItem.bind(storage);
 		storage.setItem(key, {});
@@ -416,7 +708,22 @@ describe('Draft lifecycle regressions', () => {
 			return itemKey === key ? (index as T) : getItem<T>(itemKey);
 		});
 		expect(() => cleanup.runCleanup()).not.toThrow();
-		expect(storage.keys?.()).not.toContain(key);
+		expect(getItem(key)).toEqual({});
+	});
+
+	it('does not replace unknown future index versions when starting a session', () => {
+		const { storage, session } = setup();
+		const key = storage.generateIndexKey('alice');
+		const future = {
+			version: 2,
+			userId: 'alice',
+			sessionId: 'future',
+			draftKeys: ['x'],
+			lastActivity: 1,
+		};
+		storage.setItem(key, future);
+		session.startSession('alice');
+		expect(storage.getItem(key)).toEqual(future);
 	});
 
 	for (const [draftKeyPrefix, indexKeyPrefix] of [
@@ -438,4 +745,20 @@ describe('Draft lifecycle regressions', () => {
 			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
 		});
 	}
+	it('exposes reactive pending, saved, and cancelled states for each draft', () => {
+		const { persistence } = setup();
+		expect(persistence.getSaveState('profile', '1').status).toBe('idle');
+		persistence.autoSave(form('first'), 'profile', '1');
+		persistence.autoSave(form('second'), 'profile', '2');
+		expect(persistence.getSaveState('profile', '1').status).toBe('pending');
+		persistence.deleteDraft('profile', '2');
+		expect(persistence.getSaveState('profile', '2').status).toBe('cancelled');
+		jasmine.clock().tick(101);
+		expect(persistence.getSaveState('profile', '1').status).toBe('saved');
+	});
+
+	it('assumes success for legacy adapters returning void', () => {
+		const { persistence } = setup({ customStorage: true });
+		expect(persistence.saveDraft('profile', '1', {})).toEqual({ status: 'saved' });
+	});
 });

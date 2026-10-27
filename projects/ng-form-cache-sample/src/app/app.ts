@@ -32,6 +32,14 @@ export class App {
 		inject(CLEANUP_SERVICE).start();
 	}
 
+	public get saveStatus() {
+		return this.formCacheService.getSaveState('user', 'new').status;
+	}
+
+	public retrySave() {
+		this.formCacheService.saveDraft('user', 'new', this.form.getRawValue());
+	}
+
 	public notify(draft: StoredEntityData<unknown>) {
 		// eslint-disable-next-line no-console
 		console.log('Draft loaded from storage:', draft);

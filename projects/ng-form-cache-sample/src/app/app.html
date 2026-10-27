@@ -5,4 +5,23 @@
 		<input formControlName="lastName" placeholder="Last Name" /><br />
 		<input formControlName="email" placeholder="Email" />
 	</form>
+	<p role="status" aria-live="polite">
+		@switch (saveStatus) {
+			@case ('pending') {
+				Saving draft…
+			}
+			@case ('saved') {
+				Draft saved on this device.
+			}
+			@case ('failed') {
+				Draft could not be saved. Your edits are still in the form.
+			}
+			@case ('cancelled') {
+				Draft save cancelled.
+			}
+		}
+	</p>
+	@if (saveStatus === 'failed') {
+		<button type="button" (click)="retrySave()">Retry saving</button>
+	}
 </main>

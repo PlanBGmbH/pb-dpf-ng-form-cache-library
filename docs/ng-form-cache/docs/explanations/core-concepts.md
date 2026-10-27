@@ -19,17 +19,15 @@ The combination of `entityType` and `entityId` lets you manage multiple drafts p
 
 ## User draft index
 
-To keep track of all keys that belong to a user, ng-form-cache maintains a `UserDraftIndex` entry. It records the latest session id and every draft key associated with the user. The index enables fast cleanup without searching the entire storage namespace.
+To keep track of all keys that belong to a user, ng-form-cache maintains a `UserDraftIndex` entry. It records the latest session id and every draft key associated with the user. The built-in adapter treats the index as advisory: every index read scans stored keys and reconciles validated drafts and activity timestamps. This prevents concurrent stale index writes from hiding drafts. Edits to the same draft use the last successful write; payloads are not merged.
 
 ## Session tracking
 
-`SessionManagerService` assigns the application session a generated id and stores it under the `sessionIdKey` (defaults to `app_current_session_id`). When a session starts or ends:
+`SessionManagerService` keeps one user-owned application session under `sessionIdKey` (default `app_current_session_id`). `startSession(userId)` resumes an existing session for that user or starts a replacement. Each session validity check reads persisted state, so logout and user changes apply before storage events arrive.
 
-1. The service writes the id into storage so other tabs stay in sync.
-2. The user draft index is updated with the new `sessionId` and `lastActivity` timestamp.
-3. Call `endSession(userId)` explicitly on logout. Closing a tab does not clear localStorage.
+Call `endSession(userId)` explicitly on logout and inspect its write result. It revokes the observed session across tabs and retains drafts. Revocation markers are scoped to an individual session, so a logout racing with a newer login cannot erase that login. Closing a tab does not log out. To remove drafts as well, call `deleteAllDrafts()` explicitly.
 
-You can query `sessionManagerService.isSessionValid(userId)` to confirm that the stored drafts belong to the active session.
+Use `isSessionValid(userId)` before saving, including after starting a session when browser storage might be unavailable. Drafts from previous sessions remain restorable until expiry or deletion. Cache sessions do not authenticate users; the application supplies the user identity.
 
 ## Autosave flow
 
