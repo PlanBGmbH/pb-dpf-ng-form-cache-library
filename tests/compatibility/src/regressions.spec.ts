@@ -849,4 +849,77 @@ describe('Draft lifecycle regressions', () => {
 		const { persistence } = setup({ customStorage: true });
 		expect(persistence.saveDraft('profile', '1', {})).toEqual({ status: 'saved' });
 	});
+
+	for (const customStorage of [false, true]) {
+		it(`bulk deletes a draft whose index write failed (${customStorage ? 'custom' : 'localStorage'} adapter)`, () => {
+			const { persistence, storage } = setup({ customStorage });
+			persistence.saveDraft('profile', 'indexed', {});
+			const write = spyOn(storage, 'setUserDraftIndex').and.returnValue({ success: false, reason: 'quota' });
+			expect(persistence.saveDraft('profile', 'orphan', { keep: true })).toEqual(
+				jasmine.objectContaining({ status: 'failed', phase: 'index', reason: 'quota', draftPersisted: true }),
+			);
+			expect(persistence.loadDraft('profile', 'orphan')?.formData).toEqual({ keep: true });
+			expect(persistence.deleteAllDrafts()).toEqual(jasmine.objectContaining({ success: false, reason: 'quota' }));
+			write.and.callThrough();
+			expect(persistence.hasDraft('profile', 'orphan')).toBeFalse();
+			expect(persistence.hasDraft('profile', 'indexed')).toBeFalse();
+			expect(persistence.deleteAllDrafts()).toEqual({ success: true });
+			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([]);
+		});
+	}
+
+	it('rolls back a new draft whose index write fails when the adapter cannot enumerate keys', () => {
+		const { persistence, storage } = setup({ customStorage: true });
+		(storage as { keys?: unknown }).keys = undefined;
+		persistence.saveDraft('profile', 'existing', { name: 'before' });
+		const write = spyOn(storage, 'setUserDraftIndex').and.throwError(new DOMException('full', 'QuotaExceededError'));
+		expect(persistence.saveDraft('profile', 'new', {})).toEqual(
+			jasmine.objectContaining({ status: 'failed', phase: 'index', reason: 'quota', draftPersisted: false }),
+		);
+		expect(storage.getItem(storage.generateDraftKey('alice', 'profile', 'new'))).toBeUndefined();
+		// An already indexed draft stays reachable, so the overwrite is kept.
+		expect(persistence.saveDraft('profile', 'existing', { name: 'after' })).toEqual(
+			jasmine.objectContaining({ status: 'failed', phase: 'index', draftPersisted: true }),
+		);
+		expect(persistence.loadDraft('profile', 'existing')?.formData).toEqual({ name: 'after' });
+		write.and.callThrough();
+		persistence.deleteAllDrafts();
+		expect(persistence.hasDraft('profile', 'existing')).toBeFalse();
+	});
+
+	it('does not bulk delete enumerated drafts belonging to another identity', () => {
+		const { persistence, session, storage } = setup({ customStorage: true });
+		session.startSession('alice_admin');
+		persistence.setUserId('alice_admin');
+		persistence.saveDraft('order', '42', { name: 'admin' });
+		session.startSession('alice');
+		persistence.setUserId('alice');
+		spyOn(storage, 'setUserDraftIndex').and.returnValue({ success: false, reason: 'access' });
+		persistence.saveDraft('profile', '1', {});
+		persistence.deleteAllDrafts();
+		expect(persistence.hasDraft('profile', '1')).toBeFalse();
+		persistence.setUserId('alice_admin');
+		expect(persistence.loadDraft('order', '42')?.formData).toEqual({ name: 'admin' });
+	});
+
+	it('reports drafts removed by cleanup and failed index writes without throwing', () => {
+		const { persistence, storage, cleanup } = setup({ quota: 1 });
+		persistence.saveDraft('profile', 'expired', {});
+		jasmine.clock().tick(10);
+		persistence.saveDraft('profile', 'active', {});
+		const expiredKey = storage.generateDraftKey('alice', 'profile', 'expired');
+		const activeKey = storage.generateDraftKey('alice', 'profile', 'active');
+		const expired = storage.getDraft(expiredKey)!;
+		storage.setDraft(expiredKey, { ...expired, metadata: { ...expired.metadata, expiresAt: 0 } });
+		spyOn(storage, 'setUserDraftIndex').and.throwError(new DOMException('blocked', 'SecurityError'));
+		let report!: ReturnType<typeof cleanup.runCleanup>;
+		expect(() => (report = cleanup.runCleanup())).not.toThrow();
+		expect(report.expired).toEqual([expiredKey]);
+		expect(report.evicted).toEqual([activeKey]);
+		expect(report.failures).toEqual([
+			jasmine.objectContaining({ userId: 'alice', reason: 'access' }),
+			jasmine.objectContaining({ userId: 'alice', reason: 'access' }),
+		]);
+		expect(cleanup.lastReport()).toBe(report);
+	});
 });

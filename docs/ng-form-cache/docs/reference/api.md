@@ -65,7 +65,7 @@ Handles serialization, persistence, and index management.
 | `saveDraft(entityType: string, entityId: string, formData: unknown)` | Immediately persist a custom payload and return `DraftSaveState`. |
 | `loadDraft<T>(entityType: string, entityId: string): StoredEntityData<T> \| undefined` | Return an unexpired draft; expired drafts and their index entries are removed. |
 | `deleteDraft(entityType: string, entityId: string)` | Cancel pending saves, remove a single draft, and update the user index. |
-| `deleteAllDrafts()` | Clears every draft for the current user and resets the index. |
+| `deleteAllDrafts(): StorageWriteResult` | Clears every draft for the current user and resets the index. Adapters implementing `keys()` also remove the user's unindexed drafts. Returns the index write result. |
 | `hasDraft(entityType: string, entityId: string)` | Boolean convenience wrapper around `loadDraft`. |
 
 ### `SessionManagerService`
@@ -87,7 +87,8 @@ Runs maintenance against the configured storage backend. Call `start()` explicit
 | --- | --- |
 | `start()` | Begin the cleanup interval timer. |
 | `stop()` | Cancel the cleanup interval. Called automatically in `ngOnDestroy`. |
-| `runCleanup()` | Execute cleanup immediately (expires drafts, removes stale sessions, enforces quota). |
+| `runCleanup(): CleanupReport` | Execute cleanup immediately (expires drafts, removes stale sessions, enforces quota) and report the removed draft keys (`expired`, `stale`, `evicted`) and failed index writes (`failures`). |
+| `lastReport` | Readonly signal holding the report of the most recent run, including periodic runs. |
 
 ### `LocalStorageService`
 
@@ -129,7 +130,7 @@ Reading an old draft by its identity migrates it and updates its user index. Mig
 
 ## Save outcomes
 
-`saveDraft()` returns a `DraftSaveState`. `getSaveState(entityType, entityId)` reads the reactive state for the current user; it can be called directly in an Angular template. `saveStates` is a readonly signal containing states by generated storage key. States are `idle`, `pending`, `saved`, `failed`, or `cancelled`. A failed state includes `phase` (`session`, `draft`, or `index`), `reason`, an optional original `error`, and `draftPersisted`. An index failure can leave a recoverable draft in storage; it is still reported as failed so the application can retry. A saved state acknowledges that synchronous save and does not promise retention after later edits, deletion, or cleanup.
+`saveDraft()` returns a `DraftSaveState`. `getSaveState(entityType, entityId)` reads the reactive state for the current user; it can be called directly in an Angular template. `saveStates` is a readonly signal containing states by generated storage key. States are `idle`, `pending`, `saved`, `failed`, or `cancelled`. A failed state includes `phase` (`session`, `draft`, or `index`), `reason`, an optional original `error`, and `draftPersisted`. An index failure can leave a recoverable draft in storage (`draftPersisted: true`); it is still reported as failed so the application can retry, and `deleteAllDrafts()` still finds it when the adapter implements `keys()`. When the adapter cannot enumerate keys, a newly created draft whose index write fails is rolled back (`draftPersisted: false`) so it cannot become an unreachable orphan. A saved state acknowledges that synchronous save and does not promise retention after later edits, deletion, or cleanup.
 
 The built-in adapter returns `StorageWriteResult` from `setItem`, `setDraft`, and `setUserDraftIndex`: either `{ success: true }` or `{ success: false, reason, error? }`. Reasons are `quota`, `access`, `serialization`, `unavailable`, and `unknown`. Persistence additionally reports `invalid-session`. A failed draft write never updates the user index. Custom adapters may still return `void` (assumed success) or throw; to reliably report swallowed failures, adopt explicit results.
 

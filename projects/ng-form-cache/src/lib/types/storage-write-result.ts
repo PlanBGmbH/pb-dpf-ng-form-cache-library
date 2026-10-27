@@ -17,3 +17,15 @@ export type DraftSaveState =
 			error?: unknown;
 			draftPersisted: boolean;
 	  };
+
+/** Outcome of a cleanup run, so consumers can surface drafts removed without user action. */
+export interface CleanupReport {
+	/** Draft keys removed because their TTL elapsed. */
+	expired: string[];
+	/** Draft keys removed because their user's session exceeded `staleThreshold`. */
+	stale: string[];
+	/** Draft keys removed to keep the cache within `storageQuota`. */
+	evicted: string[];
+	/** Index writes that failed; the affected drafts were still removed. */
+	failures: (StorageWriteFailure & { userId: string })[];
+}
