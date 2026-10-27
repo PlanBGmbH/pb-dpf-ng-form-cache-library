@@ -108,7 +108,9 @@ describe('Draft lifecycle regressions', () => {
 				const keys = identities.map(([user, type, id]) => storage.generateDraftKey(user, type, id));
 				expect(new Set(keys).size).toBe(identities.length);
 				keys.forEach((key, i) => {
-					expect(JSON.parse(key.slice(`${defaultConfig.draftKeyPrefix}v2:`.length))).toEqual(identities[i]);
+					expect(JSON.parse(decodeURIComponent(key.slice(`${defaultConfig.draftKeyPrefix}v2:`.length)))).toEqual(
+						identities[i],
+					);
 					expect(key.slice(defaultConfig.draftKeyPrefix.length)).not.toContain('_');
 				});
 			});
@@ -168,7 +170,7 @@ describe('Draft lifecycle regressions', () => {
 				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
 				spyOn(storage, 'setDraft').and.stub();
 				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
-				expect(storage.getDraft(key)).toBeUndefined();
+				expect(storage.getItem(key)).toBeUndefined();
 				expect(storage.getDraft(legacyKey)).toEqual(draft);
 				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
 			});
@@ -186,19 +188,19 @@ describe('Draft lifecycle regressions', () => {
 				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
 				spyOn(storage, 'setUserDraftIndex').and.stub();
 				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
-				expect(storage.getDraft(key)).toBeUndefined();
+				expect(storage.getItem(key)).toBeUndefined();
 				expect(storage.getDraft(legacyKey)).toEqual(draft);
 				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
 				persistence.deleteAllDrafts();
 				expect(storage.getDraft(legacyKey)).toBeUndefined();
-				expect(storage.getDraft(key)).toBeUndefined();
+				expect(storage.getItem(key)).toBeUndefined();
 			});
 
 			it('rolls back migration when an adapter throws while updating the index', () => {
 				const { persistence, storage, key, legacyKey, draft } = seedLegacy();
 				spyOn(storage, 'setUserDraftIndex').and.throwError('Storage full');
 				expect(persistence.loadDraft('order_item', '42')).toEqual(draft);
-				expect(storage.getDraft(key)).toBeUndefined();
+				expect(storage.getItem(key)).toBeUndefined();
 				expect(storage.getDraft(legacyKey)).toEqual(draft);
 				expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
 			});
@@ -217,12 +219,14 @@ describe('Draft lifecycle regressions', () => {
 					const updateIndex = spyOn(storage, 'setUserDraftIndex');
 					if (throws) {
 						updateIndex.and.throwError('Storage full');
-						expect(() => persistence.saveDraft('order_item', '42', { name: 'replacement' })).toThrowError();
+						expect(persistence.saveDraft('order_item', '42', { name: 'replacement' })).toEqual(
+							jasmine.objectContaining({ status: 'failed', phase: 'index', draftPersisted: false }),
+						);
 					} else {
 						updateIndex.and.stub();
 						persistence.saveDraft('order_item', '42', { name: 'replacement' });
 					}
-					expect(storage.getDraft(key)).toBeUndefined();
+					expect(storage.getItem(key)).toBeUndefined();
 					expect(storage.getDraft(legacyKey)).toEqual(draft);
 					expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([legacyKey]);
 					updateIndex.and.callThrough();
@@ -325,7 +329,7 @@ describe('Draft lifecycle regressions', () => {
 				storage.setDraft(key, other);
 				expect(persistence.loadDraft('order_item', '42')).toBeUndefined();
 				persistence.deleteDraft('order_item', '42');
-				expect(storage.getDraft(key)).toEqual(other);
+				expect(storage.getItem(key)).toEqual(other);
 			});
 		});
 	}
@@ -491,5 +495,21 @@ describe('Draft lifecycle regressions', () => {
 		expect(listener.calls.allArgs().some(([event]) => event === 'storage')).toBeFalse();
 		expect(run).not.toHaveBeenCalled();
 		expect(localStorage.length).toBe(0);
+	});
+	it('exposes reactive pending, saved, and cancelled states for each draft', () => {
+		const { persistence } = setup();
+		expect(persistence.getSaveState('profile', '1').status).toBe('idle');
+		persistence.autoSave(form('first'), 'profile', '1');
+		persistence.autoSave(form('second'), 'profile', '2');
+		expect(persistence.getSaveState('profile', '1').status).toBe('pending');
+		persistence.deleteDraft('profile', '2');
+		expect(persistence.getSaveState('profile', '2').status).toBe('cancelled');
+		jasmine.clock().tick(101);
+		expect(persistence.getSaveState('profile', '1').status).toBe('saved');
+	});
+
+	it('assumes success for legacy adapters returning void', () => {
+		const { persistence } = setup({ customStorage: true });
+		expect(persistence.saveDraft('profile', '1', {})).toEqual({ status: 'saved' });
 	});
 });
