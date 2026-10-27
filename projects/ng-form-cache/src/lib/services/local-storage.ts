@@ -151,10 +151,10 @@ export class LocalStorageService implements FormCacheStorage {
 		// cannot hide a completed save: each read reconciles the backend's current keys.
 		for (const key of new Set([...this.keys(), ...(index?.draftKeys ?? [])])) {
 			if (!key.startsWith(this.config.draftKeyPrefix)) continue;
+			if (this.getItem(key) === undefined) continue;
 			const draft = this.getDraft(key);
 			if (draft?.metadata.userId !== userId) continue;
 			const canonical = this.generateDraftKey(userId, draft.entityType, draft.entityId ?? '');
-			this.getDraft(canonical);
 			const stored = readDraft(this.getItem(canonical));
 			const hasCanonical =
 				stored && this.generateDraftKey(stored.metadata.userId, stored.entityType, stored.entityId ?? '') === canonical;
@@ -210,15 +210,29 @@ export class LocalStorageService implements FormCacheStorage {
 			(legacy.entityId ?? '') !== entityId
 		)
 			return;
-		this.setDraft(key, legacy);
+		if (legacy.metadata.expiresAt <= Date.now()) return legacy;
+		try {
+			const result = this.setDraft(key, legacy);
+			if (result && !result.success) return legacy;
+		} catch {
+			return legacy;
+		}
 		if (JSON.stringify(this.getItem(key)) !== JSON.stringify(legacy)) return legacy;
 		const indexKey = this.generateIndexKey(userId);
 		const index = readIndex(this.getItem(indexKey), userId);
 		if (index) {
 			index.draftKeys = [...new Set([...index.draftKeys.filter((item) => item !== legacyKey), key])];
-			this.setUserDraftIndex(userId, index);
-			if (readIndex(this.getItem(indexKey), userId)?.draftKeys.includes(key)) this.removeItem(legacyKey);
+			try {
+				const result = this.setUserDraftIndex(userId, index);
+				if ((!result || result.success) && readIndex(this.getItem(indexKey), userId)?.draftKeys.includes(key)) {
+					this.removeItem(legacyKey);
+					return legacy;
+				}
+			} catch {
+				// Keep the indexed legacy copy if a custom backend rejects the index write.
+			}
 		}
+		this.removeItem(key);
 		return legacy;
 	}
 

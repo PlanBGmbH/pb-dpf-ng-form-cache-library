@@ -88,11 +88,15 @@ export class FormPersistenceService implements OnDestroy {
 			}
 			phase = 'draft';
 			const now = Date.now();
+			const legacyKey = this.legacyDraftKey(entityType, entityId);
+			const legacyDraft = legacyKey === key ? undefined : this.readDraft(legacyKey, entityType, entityId);
+			const currentDraft =
+				this.storageService.getItem(key) === undefined ? undefined : this.readDraft(key, entityType, entityId);
 			const data: StoredEntityData = {
 				metadata: {
 					userId: this.userId(),
 					sessionId,
-					createdAt: this.storageService.getDraft(key)?.metadata.createdAt ?? now,
+					createdAt: (currentDraft ?? legacyDraft)?.metadata.createdAt ?? now,
 					lastModified: now,
 					expiresAt: now + this.persistentConfig.ttl,
 					version: 1,
@@ -108,8 +112,21 @@ export class FormPersistenceService implements OnDestroy {
 				return this.recordState(key, { status: 'failed', phase, ...draftResult, draftPersisted: false });
 			phase = 'index';
 			const indexResult = this.updateUserIndex(this.userId(), key);
+			const indexed = this.storageService
+				.getItem<{ draftKeys?: string[] }>(this.storageService.generateIndexKey(this.userId()))
+				?.draftKeys?.includes(key);
+			if (legacyDraft && (!indexResult.success || !indexed)) {
+				this.storageService.removeItem(key);
+				return this.recordState(key, {
+					status: 'failed',
+					phase,
+					...(indexResult.success ? { reason: 'unavailable' as const } : indexResult),
+					draftPersisted: false,
+				});
+			}
 			if (!indexResult.success)
 				return this.recordState(key, { status: 'failed', phase, ...indexResult, draftPersisted: true });
+			if (this.isDraftStored(key, data) && indexed) this.removeLegacyDraft(entityType, entityId);
 			return this.recordState(key, { status: 'saved' });
 		} catch (error) {
 			return this.recordState(key, {
@@ -129,11 +146,43 @@ export class FormPersistenceService implements OnDestroy {
 	 */
 	public loadDraft<T>(entityType: string, entityId: string) {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
-		const draft = this.storageService.getDraft<T>(key);
+		const legacyKey = this.legacyDraftKey(entityType, entityId);
+		let storedKey = key;
+		let draft = this.readDraft<T>(key, entityType, entityId);
+		if (!draft && this.storageService.getItem(key) === undefined && !this.storageService.keys?.().includes(key)) {
+			storedKey = legacyKey;
+			draft = this.readDraft<T>(legacyKey, entityType, entityId);
+		}
 		if (draft && draft.metadata.expiresAt <= Date.now()) {
-			this.removeStoredDraft(key);
-			this.removeDraftFromIndex(this.userId(), key);
+			this.removeStoredDraft(storedKey);
+			this.removeDraftFromIndex(this.userId(), storedKey);
+			this.removeLegacyDraft(entityType, entityId);
 			return undefined;
+		}
+		if (draft && storedKey !== key) {
+			try {
+				const draftResult = attemptWrite(() => this.storageService.setDraft(key, draft));
+				if (!draftResult.success) return draft;
+				// Adapters may swallow write errors; confirm both the draft and index before removing legacy data.
+				if (this.isDraftStored(key, draft)) {
+					try {
+						const indexResult = this.updateUserIndex(this.userId(), key);
+						if (
+							!indexResult.success ||
+							!this.storageService.getUserDraftIndex(this.userId())?.draftKeys.includes(key)
+						) {
+							this.storageService.removeItem(key);
+							return draft;
+						}
+					} catch {
+						this.storageService.removeItem(key);
+						return draft;
+					}
+					this.removeLegacyDraft(entityType, entityId);
+				}
+			} catch {
+				// Migration is best-effort; a readable legacy draft remains usable when the adapter rejects a write.
+			}
 		}
 		return draft;
 	}
@@ -146,8 +195,9 @@ export class FormPersistenceService implements OnDestroy {
 	public deleteDraft(entityType: string, entityId: string) {
 		const key = this.storageService.generateDraftKey(this.userId(), entityType, entityId);
 		this.cancelPendingSave(key);
-		this.removeStoredDraft(key);
+		if (this.readDraft(key, entityType, entityId)) this.removeStoredDraft(key);
 		this.removeDraftFromIndex(this.userId(), key);
+		this.removeLegacyDraft(entityType, entityId);
 	}
 
 	/**
@@ -176,6 +226,33 @@ export class FormPersistenceService implements OnDestroy {
 		index.draftKeys = [];
 		index.lastActivity = Date.now();
 		this.storageService.setUserDraftIndex(userId, index);
+	}
+
+	private legacyDraftKey(entityType: string, entityId: string) {
+		return `${this.config.draftKeyPrefix}${this.userId()}_${entityType}_${entityId}`;
+	}
+
+	private isDraftStored(key: string, draft: StoredEntityData) {
+		try {
+			return JSON.stringify(this.storageService.getItem(key)) === JSON.stringify(draft);
+		} catch {
+			return false;
+		}
+	}
+
+	private readDraft<T>(key: string, entityType: string, entityId: string) {
+		const draft = this.storageService.getDraft<T>(key);
+		return draft?.metadata?.userId === this.userId() && draft.entityType === entityType && draft.entityId === entityId
+			? draft
+			: undefined;
+	}
+
+	private removeLegacyDraft(entityType: string, entityId: string) {
+		const key = this.legacyDraftKey(entityType, entityId);
+		if (key === this.storageService.generateDraftKey(this.userId(), entityType, entityId)) return;
+		if (!this.readDraft(key, entityType, entityId)) return;
+		this.storageService.removeItem(key);
+		this.removeDraftFromIndex(this.userId(), key);
 	}
 
 	private removeStoredDraft(key: string) {

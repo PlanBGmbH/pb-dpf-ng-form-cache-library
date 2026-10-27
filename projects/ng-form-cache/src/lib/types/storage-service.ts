@@ -19,6 +19,7 @@ export interface FormCacheStorage {
 	removeDraft?(key: string): void;
 	clear(): void;
 
+	/** Must uniquely encode the complete tuple, including identifiers containing delimiters. */
 	generateDraftKey(userId: string, entityType: string, entityId: string): string;
 	generateIndexKey(userId: string): string;
 	getUserDraftIndex(userId: string): UserDraftIndex | undefined;
