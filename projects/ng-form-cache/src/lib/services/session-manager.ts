@@ -1,5 +1,4 @@
-import { isPlatformBrowser } from '@angular/common';
-import { inject, Injectable, OnDestroy, PLATFORM_ID } from '@angular/core';
+import { inject, Injectable, OnDestroy } from '@angular/core';
 import { FORM_CACHE_CONFIG } from '../config/cache-config';
 import { readSession, SessionRecord } from '../helpers/storage-records';
 import { attemptWrite } from '../helpers/storage-write';
@@ -11,16 +10,12 @@ import { validIndex } from './storage-validation';
 export class SessionManagerService implements OnDestroy {
 	private readonly storageService = inject(FORM_CACHE_STORAGE);
 	private readonly config = inject(FORM_CACHE_CONFIG);
-	private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 	private currentSessionId?: string;
-
-	public constructor() {
-		this.handleStorageChange = this.handleStorageChange.bind(this);
-		if (this.isBrowser) window.addEventListener('storage', this.handleStorageChange);
-	}
+	// Only the configured backend reports its own external changes; backends without notifications get none.
+	private readonly unwatch = this.storageService.watch?.((key) => this.handleStorageChange(key));
 
 	public ngOnDestroy() {
-		if (this.isBrowser) window.removeEventListener('storage', this.handleStorageChange);
+		this.unwatch?.();
 	}
 
 	/** Start or resume the application-wide session for this user. Check validity after a failed storage write. */
@@ -115,16 +110,11 @@ export class SessionManagerService implements OnDestroy {
 		attemptWrite(() => this.storageService.setUserDraftIndex(userId, index));
 	}
 
-	private handleStorageChange(event: StorageEvent) {
-		if (
-			event.key !== null &&
-			event.key !== this.config.sessionIdKey &&
-			!event.key.startsWith(`${this.config.sessionIdKey}:revoked:`)
-		)
+	private handleStorageChange(key: string | null) {
+		if (key !== null && key !== this.config.sessionIdKey && !key.startsWith(`${this.config.sessionIdKey}:revoked:`))
 			return;
 		try {
-			if (event.storageArea && event.storageArea !== window.localStorage) return;
-			// Events may be delayed; the persisted value, not event.newValue, is authoritative.
+			// Events may be delayed; the value persisted in the configured backend is authoritative.
 			this.getSessionId();
 		} catch {
 			this.currentSessionId = undefined;

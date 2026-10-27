@@ -18,6 +18,12 @@ export interface FormCacheStorage {
 	/** Delete a draft and any identity-checked legacy copy. */
 	removeDraft?(key: string): void;
 	clear(): void;
+	/**
+	 * Optional: notify about changes made outside this instance (e.g. other tabs or frames).
+	 * `key` is the changed key, or `null` when the whole backend was cleared. Returns an unsubscribe function.
+	 * Backends without external change notifications should not implement this.
+	 */
+	watch?(listener: (key: string | null) => void): () => void;
 
 	/** Must uniquely encode the complete tuple, including identifiers containing delimiters. */
 	generateDraftKey(userId: string, entityType: string, entityId: string): string;
