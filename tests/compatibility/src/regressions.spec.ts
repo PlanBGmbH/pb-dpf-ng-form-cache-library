@@ -47,6 +47,7 @@ describe('Draft lifecycle regressions', () => {
 			customStorage?: boolean;
 			server?: boolean;
 			quota?: number;
+			ttl?: number;
 			prefixes?: Partial<typeof defaultConfig>;
 		} = {},
 	) => {
@@ -57,7 +58,7 @@ describe('Draft lifecycle regressions', () => {
 					{
 						baseConfig: { ...defaultConfig, autoSaveDebounceTime: 100, ...options.prefixes },
 						perstistenceConfig: {
-							ttl: 1000,
+							ttl: options.ttl ?? 1000,
 							cleanupInterval: 500,
 							staleThreshold: 5000,
 							storageQuota: options.quota ?? 100000,
@@ -480,6 +481,93 @@ describe('Draft lifecycle regressions', () => {
 		cleanup.runCleanup();
 		expect(storage.getDraft(key)).toBeUndefined();
 		expect(localStorage.getItem('unrelated')).toBe('keep');
+	});
+
+	for (const customStorage of [false, true]) {
+		it(`keeps autosave working after stale cleanup with ${customStorage ? 'custom' : 'local'} storage`, () => {
+			const { persistence, session, storage, cleanup } = setup({ customStorage, ttl: 10000 });
+			persistence.saveDraft('profile', '1', { name: 'stale' });
+			const index = storage.getUserDraftIndex('alice')!;
+			const key = storage.generateDraftKey('alice', 'profile', '1');
+			jasmine.clock().tick(5001);
+			cleanup.runCleanup();
+			expect(storage.getDraft(key)).toBeUndefined();
+			expect(storage.getUserDraftIndex('alice')).toEqual({ ...index, draftKeys: [] });
+			expect(session.getSessionId()).toBe(index.sessionId);
+			expect(session.isSessionValid('alice')).toBeTrue();
+			cleanup.runCleanup();
+			persistence.autoSave(form('resumed'), 'profile', '1');
+			jasmine.clock().tick(101);
+			expect(persistence.loadDraft('profile', '1')?.formData).toEqual({ name: 'resumed' });
+			expect(storage.getUserDraftIndex('alice')?.draftKeys).toEqual([key]);
+			expect(storage.getUserDraftIndex('alice')?.lastActivity).toBe(Date.now() - 1);
+			persistence.saveDraft('profile', '1', { name: 'saved again' });
+			expect(persistence.loadDraft('profile', '1')?.formData).toEqual({ name: 'saved again' });
+		});
+	}
+
+	it('preserves an empty active index when cleanup runs during a pending autosave', () => {
+		const { persistence, session, cleanup } = setup();
+		jasmine.clock().tick(4950);
+		persistence.autoSave(form('pending'), 'profile', '1');
+		jasmine.clock().tick(51);
+		cleanup.runCleanup();
+		jasmine.clock().tick(50);
+		expect(session.isSessionValid('alice')).toBeTrue();
+		expect(persistence.loadDraft('profile', '1')?.formData).toEqual({ name: 'pending' });
+	});
+
+	it('still removes stale drafts and indexes for an inactive session', () => {
+		const { persistence, session, storage, cleanup } = setup({ ttl: 10000 });
+		persistence.saveDraft('profile', '1', {});
+		jasmine.clock().tick(5001);
+		session.startSession('bob');
+		cleanup.runCleanup();
+		expect(storage.getUserDraftIndex('alice')).toBeUndefined();
+		expect(persistence.hasDraft('profile', '1')).toBeFalse();
+		expect(session.isSessionValid('bob')).toBeTrue();
+	});
+
+	it('does not undo logout with pending or subsequent saves after stale cleanup', () => {
+		const { persistence, session, storage, cleanup } = setup();
+		jasmine.clock().tick(5001);
+		cleanup.runCleanup();
+		persistence.autoSave(form('pending'), 'profile', '1');
+		session.endSession('alice');
+		cleanup.runCleanup();
+		persistence.autoSave(form('after logout'), 'profile', '1');
+		persistence.saveDraft('profile', '2', {});
+		jasmine.clock().tick(101);
+		expect(persistence.hasDraft('profile', '1')).toBeFalse();
+		expect(persistence.hasDraft('profile', '2')).toBeFalse();
+		expect(storage.getUserDraftIndex('alice')).toBeUndefined();
+		expect(session.getSessionId()).toBeUndefined();
+		expect(session.isSessionValid('alice')).toBeFalse();
+	});
+
+	it('does not preserve a stale index using a cached session after its stored ID is removed', () => {
+		const { persistence, session, storage, cleanup } = setup();
+		storage.removeItem(defaultConfig.sessionIdKey);
+		jasmine.clock().tick(5001);
+		cleanup.runCleanup();
+		persistence.autoSave(form('after logout'), 'profile', '1');
+		jasmine.clock().tick(101);
+		expect(storage.getUserDraftIndex('alice')).toBeUndefined();
+		expect(persistence.hasDraft('profile', '1')).toBeFalse();
+		expect(session.isSessionValid('alice')).toBeFalse();
+	});
+
+	it('does not recreate an arbitrary missing session index', () => {
+		const { persistence, storage, cleanup } = setup();
+		storage.setItem(defaultConfig.sessionIdKey, 'unverified-session');
+		storage.removeItem(storage.generateIndexKey('alice'));
+		cleanup.runCleanup();
+		persistence.autoSave(form('missing index'), 'profile', '1');
+		persistence.saveDraft('profile', '2', {});
+		jasmine.clock().tick(101);
+		expect(storage.getUserDraftIndex('alice')).toBeUndefined();
+		expect(persistence.hasDraft('profile', '1')).toBeFalse();
+		expect(persistence.hasDraft('profile', '2')).toBeFalse();
 	});
 
 	it('ignores unrelated application data when enforcing the cache quota', () => {
