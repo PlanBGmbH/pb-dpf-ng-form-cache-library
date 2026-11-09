@@ -1,6 +1,6 @@
 {
 	"name": "@planbgmbh/ng-form-cache",
-	"version": "0.0.3",
+	"version": "0.0.4",
 	"publishConfig": {
 		"@planbgmbh:registry": "https://npm.pkg.github.com"
 	},
