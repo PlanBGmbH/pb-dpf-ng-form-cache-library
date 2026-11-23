@@ -19,7 +19,7 @@ Future Angular majors should be added to the peer range after passing the compat
 
 ### Development and compatibility checks
 
-Use Node.js 24.15 or later in the 24.x line, which supports all three Angular majors
+Use Node.js 26 (current LTS), which supports all three Angular majors
 ([Angular compatibility table](https://angular.dev/reference/versions)).
 
 ```sh
