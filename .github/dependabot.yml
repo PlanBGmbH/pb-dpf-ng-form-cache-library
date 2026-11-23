@@ -1,0 +1,12 @@
+version: 2
+
+updates:
+  # Default branch (e.g. main)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/docs/ng-form-cache"
+    schedule:
+      interval: "weekly"
