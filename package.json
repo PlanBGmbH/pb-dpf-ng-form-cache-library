@@ -52,7 +52,7 @@
 		"@angular/compiler-cli": "^20.2.0",
 		"@commitlint/cli": "^19.8.1",
 		"@commitlint/config-conventional": "^19.8.1",
-		"@types/jasmine": "~5.1.0",
+		"@types/jasmine": "~7.0.0",
 		"angular-eslint": "20.2.0",
 		"commit-and-tag-version": "^12.6.0",
 		"eslint": "^9.33.0",
