@@ -34,7 +34,7 @@ jobs:
       - name: Setup Node and Install
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '26'
       - run: cd docs/ng-form-cache && npm install && npm run build
       - name: Setup Pages
         uses: actions/configure-pages@v5
