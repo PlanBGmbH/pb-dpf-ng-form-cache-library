@@ -11,11 +11,10 @@ Supports Angular **20, 21, and 22**, including standalone applications and zonel
 Use matching major versions of `@angular/common`, `@angular/core`, and `@angular/forms` in your application.
 RxJS `^6.5.3 || ^7.4.0` is a peer dependency, matching Angular's supported range.
 
-The published library is built with Angular 20 and partial-Ivy compilation. Keeping the build on the
-oldest supported Angular major preserves compatibility with Angular 20 consumers while newer
-applications link the package with their own compiler. See
+The published library is built with Angular 22 and partial-Ivy compilation. The compatibility suite
+also verifies the packaged library with Angular 20 and 21 consumers. See
 [Angular's library compatibility guidance](https://angular.dev/tools/libraries/creating-libraries#ensuring-library-version-compatibility).
-Future Angular majors should be added to the peer range after passing the compatibility suite.
+Keep all supported majors in the peer range only while they pass the compatibility suite.
 
 ### Development and compatibility checks
 
